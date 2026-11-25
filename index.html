@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Solstice Orrery: Keeper of the Brass Sky</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='8' fill='%230E0C0B'/%3E%3Ccircle cx='18' cy='18' r='11' fill='none' stroke='%23F2B84B' stroke-width='1.8'/%3E%3Ccircle cx='18' cy='18' r='4.2' fill='%23F2B84B'/%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="Awaken three forged bronze astronomical instruments atop an obsidian volcanic sanctuary before the solar eclipse seals the sky."
+    />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <div id="viewport" class="viewport" aria-label="Solstice Orrery 3D Sanctuary">
+        <canvas id="orrery-canvas" class="orrery-canvas"></canvas>
+        <div id="hover-pill" class="hover-pill" aria-live="polite" hidden></div>
+        <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
+      </div>
+
+      <header class="hud-top" aria-label="Sanctuary status bar">
+        <div class="hud-brand">
+          <svg class="brand-seal" viewBox="0 0 36 36" width="28" height="28" aria-hidden="true">
+            <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 2" />
+            <circle cx="18" cy="18" r="3.4" fill="currentColor" />
+            <path d="M18 1v6M18 29v6M1 18h6M29 18h6M6 6l4 4M26 26l4 4M30 6l-4 4M10 26l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <div class="brand-text">
+            <span class="brand-title">Solstice Orrery</span>
+            <span id="seed-label" class="brand-seed">Daily Seed</span>
+          </div>
+        </div>
+
+        <div class="hud-telemetry">
+          <div id="timer-card" class="telemetry-cell timer-cell" aria-label="Solar eclipse countdown">
+            <span class="telemetry-label">Eclipse</span>
+            <span id="timer-value" class="telemetry-value">05:00</span>
+          </div>
+          <div class="telemetry-cell conduits-cell" aria-label="Solar conduits awakened">
+            <span class="telemetry-label">Conduits</span>
+            <div class="conduit-bars" id="conduit-bars" aria-hidden="true">
+              <span class="conduit-seg" data-puzzle="astrolabe" title="Meridian Astrolabe"></span>
+              <span class="conduit-seg" data-puzzle="mirrors" title="Mirror Courtyard"></span>
+              <span class="conduit-seg" data-puzzle="chimes" title="Harmonic Sun-Chimes"></span>
+            </div>
+            <span id="conduit-count" class="telemetry-value">0/3</span>
+          </div>
+          <div class="telemetry-cell moves-cell" aria-label="Moves taken">
+            <span class="telemetry-label">Moves</span>
+            <span id="moves-value" class="telemetry-value">0</span>
+          </div>
+        </div>
+
+        <div class="hud-actions">
+          <button type="button" id="btn-hint" class="icon-btn" title="Toggle field hint (H)" aria-expanded="false" aria-controls="hint-drawer">
+            <span>Hint</span><kbd>H</kbd>
+          </button>
+          <button type="button" id="btn-reset-view" class="icon-btn" title="Reset vantage point (R)">
+            <span>View</span><kbd>R</kbd>
+          </button>
+          <button type="button" id="btn-mute" class="icon-btn" title="Toggle sound and voice (M)" aria-pressed="false">
+            <span id="mute-label">Sound</span><kbd>M</kbd>
+          </button>
+          <button type="button" id="btn-guide" class="icon-btn" title="Controls and rules">
+            <span>Guide</span>
+          </button>
+        </div>
+      </header>
+
+      <aside id="hint-drawer" class="hint-drawer" aria-label="Sanctuary field note" hidden>
+        <div class="hint-header">
+          <span class="hint-tag">Keeper’s Field Note</span>
+          <button type="button" id="btn-close-hint" class="close-chip" aria-label="Close hint">Close</button>
+        </div>
+        <p id="hint-body" class="hint-body"></p>
+      </aside>
+
+      <section id="station-bar" class="station-bar" aria-label="Instrument controls" hidden>
+        <div class="station-meta">
+          <span id="station-kicker" class="station-kicker">West Wing</span>
+          <strong id="station-name" class="station-name">Meridian Astrolabe</strong>
+          <span id="station-status" class="station-status">Align all 3 bronze apertures to zenith</span>
+        </div>
+        <div id="station-controls" class="station-controls"></div>
+      </section>
+
+      <nav class="pad-dock" aria-label="Sanctuary stepping pads">
+        <button type="button" class="pad-btn" data-pad="overview">Overview</button>
+        <button type="button" class="pad-btn" data-pad="astrolabe">Astrolabe</button>
+        <button type="button" class="pad-btn" data-pad="mirrors">Mirrors</button>
+        <button type="button" class="pad-btn" data-pad="chimes">Sun-Chimes</button>
+        <button type="button" class="pad-btn" data-pad="apex">Solstice Apex</button>
+      </nav>
+
+      <!-- Native Modal: Title / Ritual Briefing -->
+      <dialog id="modal-title" class="sanctuary-dialog" aria-labelledby="title-modal-heading">
+        <div class="dialog-frame">
+          <h1 id="title-modal-heading" class="dialog-title">Solstice Orrery</h1>
+          <p class="dialog-subtitle">Keeper of the Brass Sky (VIVERSE Spark 2026)</p>
+          <p class="dialog-lead">
+            The solar eclipse seals this obsidian sanctuary in five minutes. Awaken the three forged-bronze astronomical
+            instruments, flood the volcanic floor conduits with molten gold, and ignite the Solstice Apex Crown before darkness claims the canyon.
+          </p>
+          <div class="dialog-pillars">
+            <div class="pillar-item">
+              <strong>1. Meridian Astrolabe</strong>
+              <span>Rotate three geared bronze rings until every solar aperture locks at zenith.</span>
+            </div>
+            <div class="pillar-item">
+              <strong>2. Mirror Courtyard</strong>
+              <span>Pivot carved basalt reflectors to steer a live sunbeam around fluted pillars into the prism.</span>
+            </div>
+            <div class="pillar-item">
+              <strong>3. Harmonic Sun-Chimes</strong>
+              <span>Watch and hear the golden pulse, then strike the four suspended temple bells from low to high.</span>
+            </div>
+          </div>
+          <div class="dialog-seed-row">
+            <span id="title-seed-badge" class="seed-chip">Daily Seed</span>
+            <span id="title-best-badge" class="best-chip">5:00 Eclipse Countdown</span>
+          </div>
+          <div class="dialog-actions">
+            <button type="button" id="btn-start-daily" class="btn-primary" autofocus>Begin Daily Ritual</button>
+            <button type="button" id="btn-start-random" class="btn-secondary">Random Seed</button>
+            <button type="button" id="btn-start-sandbox" class="btn-ghost">Free Explore</button>
+          </div>
+          <p class="dialog-footnote">
+            Click floor pads or dock buttons to glide smoothly, drag to orbit, use WASD or Arrow keys to stroll, and press R, H, or M for shortcuts.
+          </p>
+        </div>
+      </dialog>
+
+      <!-- Native Modal: Victory -->
+      <dialog id="modal-victory" class="sanctuary-dialog" aria-labelledby="victory-modal-heading">
+        <div class="dialog-frame">
+          <h1 id="victory-modal-heading" class="dialog-title">The Brass Sky Shines</h1>
+          <div id="victory-stars" class="victory-stars" aria-label="Star rating"></div>
+          <p id="victory-summary" class="dialog-lead"></p>
+          <div class="victory-stats">
+            <div class="stat-box">
+              <span class="stat-label">Time Left</span>
+              <strong id="victory-time" class="stat-num">03:45</strong>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">Moves</span>
+              <strong id="victory-moves" class="stat-num">18</strong>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">Score</span>
+              <strong id="victory-score" class="stat-num">4,850</strong>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label">Seed</span>
+              <strong id="victory-seed" class="stat-num">SOL-2026-11-24</strong>
+            </div>
+          </div>
+          <div class="dialog-actions">
+            <button type="button" id="btn-victory-sandbox" class="btn-primary" autofocus>Free Explore Sandbox</button>
+            <button type="button" id="btn-victory-daily" class="btn-secondary">Replay Daily Seed</button>
+            <button type="button" id="btn-victory-random" class="btn-ghost">New Random Seed</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Native Modal: Eclipse Timeout (Lose Condition) -->
+      <dialog id="modal-timeout" class="sanctuary-dialog" aria-labelledby="timeout-modal-heading">
+        <div class="dialog-frame">
+          <h1 id="timeout-modal-heading" class="dialog-title">The Meridian Fell Dark</h1>
+          <p id="timeout-summary" class="dialog-lead">
+            The five-minute solar eclipse closed before the Solstice Apex Crown was ignited.
+          </p>
+          <div class="dialog-actions">
+            <button type="button" id="btn-retry-same" class="btn-primary" autofocus>Rewind and Retry Seed</button>
+            <button type="button" id="btn-retry-random" class="btn-secondary">Try Random Seed</button>
+            <button type="button" id="btn-timeout-sandbox" class="btn-ghost">Enter Free Explore</button>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Native Modal: Controls & Guide -->
+      <dialog id="modal-guide" class="sanctuary-dialog" closedby="any" aria-labelledby="guide-modal-heading">
+        <div class="dialog-frame">
+          <h1 id="guide-modal-heading" class="dialog-title">Navigation and Instruments</h1>
+          <ul class="guide-list">
+            <li><strong>Zero-Motion-Sickness Travel:</strong> Click any glowing stepping pad on the basalt floor or use the bottom pad dock to glide smoothly to that vantage point.</li>
+            <li><strong>Free Look and Stroll:</strong> Drag anywhere on the sky or terrace to orbit smoothly. Scroll to adjust comfort distance. Use <code>WASD</code> or Arrow keys to stroll gently across the sanctuary.</li>
+            <li><strong>Direct 3D Interaction:</strong> Click geared bronze rings, reflector obelisks, suspended temple bells, or the central crown directly in 3D, or use the contextual action bar below.</li>
+            <li><strong>Keyboard Shortcuts:</strong> Press <code>H</code> for Field Hint, <code>R</code> to Reset View, <code>M</code> to Mute Audio and Voice, and <code>1</code> through <code>5</code> for Stepping Pads.</li>
+            <li><strong>Win and Lose Rules:</strong> Awaken all 3 instruments and ignite the Solstice Apex Crown before the 5:00 Eclipse Countdown reaches zero.</li>
+          </ul>
+          <form method="dialog" class="dialog-actions">
+            <button type="submit" value="close" class="btn-primary" autofocus>Return to Sanctuary</button>
+          </form>
+        </div>
+      </dialog>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
