@@ -3,13 +3,17 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import type { GameSnapshot, StationId } from '../game/types';
+import type { CameraMode, GameSnapshot, SkyEvolutionStage, StationId } from '../game/types';
 import { PALETTE } from './palette';
 import { createSanctuaryTextures, type SanctuaryTextureSet } from './textures';
 import { createSolsticeSky, type SolsticeSkySystem } from './sky';
 import { createObservatoryEnvironment, type ObservatoryEnvironment } from './environment';
 import { createObservatoryInstruments, type ObservatoryInstruments } from './instruments';
-import { ComfortCameraRig, type CameraPreset } from './cameraRig';
+import {
+  ComfortCameraRig,
+  findNearbyInteractStation,
+  type CameraPreset,
+} from './cameraRig';
 
 export type SceneInteractAction =
   | { kind: 'pad'; station: StationId; label: string }
@@ -22,8 +26,60 @@ export type SceneInteractAction =
 export interface ObservatorySceneCallbacks {
   onInteract: (action: SceneInteractAction) => void;
   onHoverChange: (label: string | null) => void;
+  onProximityChange?: (station: Exclude<StationId, 'overview'> | null) => void;
   onPulseBellAudio: (rank: number) => void;
   onTick: (deltaSec: number) => void;
+}
+
+const GOD_RAY_VERTEX = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vNormalDir;
+varying vec3 vViewDir;
+
+void main() {
+  vUv = uv;
+  vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+  vNormalDir = normalize(normalMatrix * normal);
+  vViewDir = normalize(-mvPos.xyz);
+  gl_Position = projectionMatrix * mvPos;
+}
+`;
+
+const GOD_RAY_FRAGMENT = /* glsl */ `
+uniform float uTime;
+uniform vec3 uColor;
+uniform float uOpacity;
+
+varying vec2 vUv;
+varying vec3 vNormalDir;
+varying vec3 vViewDir;
+
+void main() {
+  // Soft grazing Fresnel fade so volumetric god-ray cone edges vanish seamlessly
+  float edge = pow(abs(dot(normalize(vNormalDir), normalize(vViewDir))), 1.75);
+  // Smooth vertical shaft fade (gentle entry from sky oculus, soft dissipation near obsidian floor)
+  float verticalFade = smoothstep(0.0, 0.24, vUv.y) * (1.0 - smoothstep(0.68, 1.0, vUv.y));
+  // Subtle scrolling dust-curtain striations along the slanted beam
+  float rays = 0.65 + 0.35 * sin(vUv.x * 25.1327 + uTime * 0.45 + vUv.y * 4.5);
+  float shimmer = 0.8 + 0.2 * sin(vUv.y * 14.0 - uTime * 1.1 + vUv.x * 12.566);
+
+  float alpha = edge * verticalFade * rays * shimmer * uOpacity;
+  gl_FragColor = vec4(uColor * (0.9 + rays * 0.25), clamp(alpha, 0.0, 0.42));
+}
+`;
+
+function skyStageToFloat(stage: SkyEvolutionStage, apexIgnited: boolean): number {
+  if (apexIgnited) return 3.0;
+  switch (stage) {
+    case 'noon-gold':
+      return 0.0;
+    case 'amber-dusk':
+      return 1.0;
+    case 'crimson-eclipse':
+      return 2.0;
+    case 'dawn-corona':
+      return 3.0;
+  }
 }
 
 export class ObservatoryScene {
@@ -48,11 +104,21 @@ export class ObservatoryScene {
   private readonly hoverHalo: THREE.Mesh;
   private readonly hoverHaloMat: THREE.MeshBasicMaterial;
 
+  private readonly godRayGroup: THREE.Group;
+  private readonly godRayGeo: THREE.BufferGeometry;
+  private readonly godRayMat: THREE.ShaderMaterial;
+  private readonly godRayUniforms: {
+    uTime: { value: number };
+    uColor: { value: THREE.Color };
+    uOpacity: { value: number };
+  };
+
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointerNdc = new THREE.Vector2();
 
   private snapshot: GameSnapshot | null = null;
   private progressVisual = 0.08;
+  private skyStageVisual = 0.0;
   private rafId = 0;
   private lastFrameMs = 0;
   private elapsedSec = 0;
@@ -63,11 +129,23 @@ export class ObservatoryScene {
   private isDragging = false;
   private dragMoved = false;
   private lastHoveredLabel: string | null = null;
+  private lastNearbyStation: Exclude<StationId, 'overview'> | null = null;
 
-  private readonly fogEclipse = new THREE.Color(0x1b120d);
-  private readonly fogSolstice = new THREE.Color(0x523118);
-  private readonly sunEclipse = new THREE.Color(0xf29c46);
-  private readonly sunSolstice = new THREE.Color(0xffedb8);
+  // Strictly warm 4-stage palette anchors (zero blue/cyan/teal/purple)
+  private readonly fogNoon = new THREE.Color(0x28170c);
+  private readonly fogAmber = new THREE.Color(0x1f1109);
+  private readonly fogCrimson = new THREE.Color(0x1a0907);
+  private readonly fogDawn = new THREE.Color(0x361d0d);
+
+  private readonly sunNoon = new THREE.Color(0xffd786);
+  private readonly sunAmber = new THREE.Color(0xf09b42);
+  private readonly sunCrimson = new THREE.Color(0xe04f20);
+  private readonly sunDawn = new THREE.Color(0xffe6a6);
+
+  private readonly rayNoon = new THREE.Color(0xf7c564);
+  private readonly rayAmber = new THREE.Color(0xe88e36);
+  private readonly rayCrimson = new THREE.Color(0xdc441c);
+  private readonly rayDawn = new THREE.Color(0xffdf90);
 
   constructor(canvas: HTMLCanvasElement, callbacks: ObservatorySceneCallbacks) {
     this.canvas = canvas;
@@ -87,14 +165,13 @@ export class ObservatoryScene {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.scene = new THREE.Scene();
-    this.fog = new THREE.FogExp2(0x1b120d, 0.0082);
+    this.fog = new THREE.FogExp2(0x28170e, 0.0076);
     this.scene.fog = this.fog;
 
     const width = canvas.clientWidth || window.innerWidth || 1280;
     const height = canvas.clientHeight || window.innerHeight || 720;
     this.renderer.setSize(width, height, false);
 
-    // Warm obsidian & molten-gold studio PMREM reflections so hammered bronze & basalt gleam crisply
     this.envRenderTarget = this.createMoltenGoldEnvironment();
     this.scene.environment = this.envRenderTarget.texture;
     this.scene.environmentIntensity = 1.35;
@@ -102,7 +179,6 @@ export class ObservatoryScene {
     this.camera = new THREE.PerspectiveCamera(46, width / height, 0.2, 260);
     this.cameraRig = new ComfortCameraRig(this.camera);
 
-    // Post-processing pipeline: RenderPass -> UnrealBloomPass -> OutputPass
     this.composer = new EffectComposer(this.renderer);
     this.composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.composer.setSize(width, height);
@@ -110,18 +186,17 @@ export class ObservatoryScene {
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
-      0.42, // crisp molten-gold strength without milky washout
-      0.38, // tight optical halo radius
-      0.88, // high threshold so only emissive molten beams/crystals bloom, never floor glare
+      0.42,
+      0.38,
+      0.88,
     );
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
-    // Cinematic warm volcanic sanctuary lighting (zero blue/cyan/purple)
     this.hemiLight = new THREE.HemisphereLight(0xf2bd6b, PALETTE.obsidianBase, 0.88);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffcb7a, 2.75);
+    this.sunLight = new THREE.DirectionalLight(0xffcb7a, 2.5);
     this.sunLight.position.set(-22, 24, -26);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
@@ -134,12 +209,10 @@ export class ObservatoryScene {
     this.sunLight.shadow.bias = -0.0005;
     this.scene.add(this.sunLight);
 
-    // Sculpted molten-amber rim light from opposite volcanic horizon for basalt carving relief
-    this.rimLight = new THREE.DirectionalLight(0xd46a28, 1.05);
+    this.rimLight = new THREE.DirectionalLight(0xd46a28, 0.95);
     this.rimLight.position.set(20, 11, 22);
     this.scene.add(this.rimLight);
 
-    // Subtle 3D golden hover beacon ring on hovered interactive objects
     this.hoverHaloMat = new THREE.MeshBasicMaterial({
       color: PALETTE.moltenGold,
       transparent: true,
@@ -162,6 +235,38 @@ export class ObservatoryScene {
     this.instruments = createObservatoryInstruments(this.textures, callbacks.onPulseBellAudio);
     this.scene.add(this.instruments.group);
 
+    // Custom GLSL Volumetric God-Ray Cones pouring diagonally from celestial oculus into sanctuary
+    this.godRayUniforms = {
+      uTime: { value: 0 },
+      uColor: { value: new THREE.Color(0xffd778) },
+      uOpacity: { value: 0.24 },
+    };
+    this.godRayGeo = new THREE.CylinderGeometry(1.5, 6.2, 32, 32, 1, true);
+    this.godRayMat = new THREE.ShaderMaterial({
+      vertexShader: GOD_RAY_VERTEX,
+      fragmentShader: GOD_RAY_FRAGMENT,
+      uniforms: this.godRayUniforms,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    this.godRayGroup = new THREE.Group();
+    const rayConfigs: Array<{ pos: [number, number, number]; scale: [number, number, number]; tiltZ: number; tiltX: number }> = [
+      { pos: [-1.4, 14.5, -2.2], scale: [1.15, 1.05, 1.15], tiltZ: -0.22, tiltX: 0.24 },
+      { pos: [-10.8, 13.5, 0.4], scale: [0.78, 0.96, 0.78], tiltZ: -0.22, tiltX: 0.24 },
+      { pos: [9.8, 13.5, 0.4], scale: [0.82, 0.96, 0.82], tiltZ: -0.22, tiltX: 0.24 },
+    ];
+    for (const cfg of rayConfigs) {
+      const cone = new THREE.Mesh(this.godRayGeo, this.godRayMat);
+      cone.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+      cone.scale.set(cfg.scale[0], cfg.scale[1], cfg.scale[2]);
+      cone.rotation.z = cfg.tiltZ;
+      cone.rotation.x = cfg.tiltX;
+      this.godRayGroup.add(cone);
+    }
+    this.scene.add(this.godRayGroup);
+
     this.bindEvents();
     this.lastFrameMs = performance.now();
     this.animate(this.lastFrameMs);
@@ -174,6 +279,7 @@ export class ObservatoryScene {
   public syncSnapshot(snapshot: GameSnapshot): void {
     const prevPhase = this.snapshot?.phase;
     const prevStation = this.snapshot?.activeStation;
+    const prevCameraMode = this.snapshot?.cameraMode;
     this.snapshot = snapshot;
 
     this.instruments.syncState(snapshot);
@@ -182,6 +288,14 @@ export class ObservatoryScene {
       this.cameraRig.setTitleAutoOrbit(true);
     } else if (prevPhase === 'title') {
       this.cameraRig.setTitleAutoOrbit(false);
+    }
+
+    if (snapshot.cameraMode !== prevCameraMode) {
+      this.cameraRig.setMode(snapshot.cameraMode, false);
+      if (snapshot.cameraMode === 'orbit') {
+        this.lastNearbyStation = null;
+        this.callbacks.onProximityChange?.(null);
+      }
     }
 
     if (snapshot.activeStation !== prevStation) {
@@ -203,7 +317,29 @@ export class ObservatoryScene {
   }
 
   public snapToStation(station: StationId): void {
-    this.cameraRig.moveToStation(station, true);
+    this.cameraRig.moveToStation(station, true, true);
+  }
+
+  public teleportToStation(station: StationId): void {
+    this.cameraRig.moveToStation(station, false, true);
+  }
+
+  public setCameraMode(mode: CameraMode, immediate: boolean = false): void {
+    this.cameraRig.setMode(mode, immediate);
+  }
+
+  public setWalkPose(x: number, z: number, yaw: number, pitch: number = 0.08): void {
+    this.cameraRig.setWalkPose(x, z, yaw, pitch);
+    const near = findNearbyInteractStation(this.cameraRig.getWalkPosition());
+    const nextStation = near ? near.station : null;
+    this.lastNearbyStation = nextStation;
+    this.callbacks.onProximityChange?.(nextStation);
+  }
+
+  public getNearbyWalkStation(): Exclude<StationId, 'overview'> | null {
+    if (this.cameraRig.getMode() !== 'walk') return null;
+    const near = findNearbyInteractStation(this.cameraRig.getWalkPosition());
+    return near ? near.station : null;
   }
 
   public setCinematicPose(pose: CameraPreset, immediate: boolean = false): void {
@@ -342,11 +478,39 @@ export class ObservatoryScene {
     this.renderFrame(deltaSec);
   };
 
+  private lerpFourStageColor(
+    out: THREE.Color,
+    c0: THREE.Color,
+    c1: THREE.Color,
+    c2: THREE.Color,
+    c3: THREE.Color,
+    stage03: number,
+  ): void {
+    const s = Math.max(0, Math.min(3, stage03));
+    if (s < 1) {
+      out.copy(c0).lerp(c1, s);
+    } else if (s < 2) {
+      out.copy(c1).lerp(c2, s - 1);
+    } else {
+      out.copy(c2).lerp(c3, s - 2);
+    }
+  }
+
   private renderFrame(deltaSec: number): void {
     this.elapsedSec += deltaSec;
 
     this.callbacks.onTick(deltaSec);
     this.cameraRig.update(deltaSec);
+
+    // Report live Walkaround proximity station changes
+    if (this.cameraRig.getMode() === 'walk') {
+      const near = findNearbyInteractStation(this.cameraRig.getWalkPosition());
+      const nextNear = near ? near.station : null;
+      if (nextNear !== this.lastNearbyStation) {
+        this.lastNearbyStation = nextNear;
+        this.callbacks.onProximityChange?.(nextNear);
+      }
+    }
 
     const snap = this.snapshot;
     const solvedRatio = snap ? snap.solvedCount / 3 : 0;
@@ -354,7 +518,16 @@ export class ObservatoryScene {
     this.progressVisual = THREE.MathUtils.lerp(
       this.progressVisual,
       targetProgress,
-      Math.min(1, deltaSec * 1.4),
+      Math.min(1, deltaSec * 1.6),
+    );
+
+    const targetSkyStage = snap
+      ? skyStageToFloat(snap.trialMeta.skyStage, snap.apexIgnited)
+      : 1.0;
+    this.skyStageVisual = THREE.MathUtils.lerp(
+      this.skyStageVisual,
+      targetSkyStage,
+      Math.min(1, deltaSec * 2.2),
     );
 
     const urgency =
@@ -367,19 +540,47 @@ export class ObservatoryScene {
     this.instruments.update(this.elapsedSec, deltaSec);
     const bloom = this.instruments.getApexBloomFactor();
 
-    this.sky.update(this.elapsedSec, this.progressVisual, urgency, bloom);
+    this.sky.update(this.elapsedSec, this.progressVisual, urgency, bloom, this.skyStageVisual);
 
+    // 4-Stage dynamic lighting & volumetric god-rays evolution (Noon Gold -> Amber Dusk -> Crimson Eclipse -> Dawn Corona)
     this.sunLight.position.copy(this.sky.sunDirection).multiplyScalar(44);
-    this.sunLight.color.copy(this.sunEclipse).lerp(this.sunSolstice, this.progressVisual);
-    this.sunLight.intensity = 2.1 + this.progressVisual * 0.75 + bloom * 0.45 - urgency * 0.5;
-    this.hemiLight.intensity = 0.74 + this.progressVisual * 0.34 - urgency * 0.18;
-    this.rimLight.intensity = 0.85 + this.progressVisual * 0.32 + bloom * 0.25;
-    this.fog.color.copy(this.fogEclipse).lerp(this.fogSolstice, this.progressVisual);
-    this.fog.density = THREE.MathUtils.lerp(0.008, 0.005, this.progressVisual);
+    this.lerpFourStageColor(
+      this.sunLight.color,
+      this.sunNoon,
+      this.sunAmber,
+      this.sunCrimson,
+      this.sunDawn,
+      this.skyStageVisual,
+    );
+    const crimsonDip = this.skyStageVisual > 1.2 && this.skyStageVisual < 2.5 ? 0.35 : 0;
+    this.sunLight.intensity = 2.25 - crimsonDip + this.progressVisual * 0.65 + bloom * 0.55 - urgency * 0.4;
+    this.hemiLight.intensity = 0.78 - crimsonDip * 0.35 + this.progressVisual * 0.32 - urgency * 0.16;
+    this.rimLight.intensity = 0.88 + crimsonDip * 0.65 + this.progressVisual * 0.25 + bloom * 0.3;
 
-    // Crisp calibrated UnrealBloomPass: molten gold glows sharply while obsidian stays deep and rich
-    this.bloomPass.strength = 0.38 + this.progressVisual * 0.09 + bloom * 0.16;
-    this.bloomPass.threshold = THREE.MathUtils.lerp(0.88, 0.8, bloom);
+    this.lerpFourStageColor(
+      this.fog.color,
+      this.fogNoon,
+      this.fogAmber,
+      this.fogCrimson,
+      this.fogDawn,
+      this.skyStageVisual,
+    );
+    this.fog.density = THREE.MathUtils.lerp(0.0056, 0.0036, this.progressVisual);
+
+    // Volumetric God-Ray Cones animation & color sync
+    this.godRayUniforms.uTime.value = this.elapsedSec;
+    this.lerpFourStageColor(
+      this.godRayUniforms.uColor.value,
+      this.rayNoon,
+      this.rayAmber,
+      this.rayCrimson,
+      this.rayDawn,
+      this.skyStageVisual,
+    );
+    this.godRayUniforms.uOpacity.value = 0.14 + this.progressVisual * 0.06 + bloom * 0.07;
+
+    this.bloomPass.strength = 0.34 + this.progressVisual * 0.06 + bloom * 0.09;
+    this.bloomPass.threshold = THREE.MathUtils.lerp(0.92, 0.88, bloom);
 
     if (this.hoverHalo.visible) {
       const pulse = 1 + Math.sin(this.elapsedSec * 4.5) * 0.1;
@@ -445,6 +646,8 @@ export class ObservatoryScene {
     window.removeEventListener('resize', this.onResize);
     this.hoverHalo.geometry.dispose();
     this.hoverHaloMat.dispose();
+    this.godRayGeo.dispose();
+    this.godRayMat.dispose();
     this.sky.dispose();
     this.env.dispose();
     this.instruments.dispose();

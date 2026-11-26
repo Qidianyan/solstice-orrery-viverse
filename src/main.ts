@@ -1,5 +1,6 @@
 import { GameController } from './game/controller';
-import type { GameSnapshot, StationId } from './game/types';
+import type { CameraMode, GameSnapshot, StationId, TrialNumber } from './game/types';
+import { getAscendingChimeSlots } from './game/puzzles';
 import type { CameraPreset } from './scene/cameraRig';
 import { SoundEngine } from './audio/soundEngine';
 import { ObservatoryScene, type SceneInteractAction } from './scene/observatoryScene';
@@ -10,6 +11,9 @@ declare global {
     __ORRERY__?: {
       getSnapshot: () => GameSnapshot;
       snapCameraToStation: (station: StationId) => void;
+      setCameraMode: (mode: CameraMode, immediate?: boolean) => void;
+      setWalkPose: (x: number, z: number, yaw: number, pitch?: number) => void;
+      setTrial: (trial: TrialNumber) => void;
       setCinematicPose: (pose: CameraPreset, immediate?: boolean) => void;
       setManualStep: (enabled: boolean) => void;
       stepFrame: (deltaSec: number) => void;
@@ -24,7 +28,7 @@ function bootstrap(): void {
     throw new Error('Missing #orrery-canvas element.');
   }
 
-  const controller = new GameController();
+  const controller = new GameController({ trial: 1 });
   const sound = new SoundEngine();
   let lastSecondDisplayed = -1;
 
@@ -50,6 +54,19 @@ function bootstrap(): void {
     onSelectStation: (station) => {
       sound.playTeleportStep();
       controller.setStation(station);
+      scene.teleportToStation(station);
+    },
+    onSelectTrial: (trial) => {
+      sound.playTeleportStep();
+      controller.startTrial(trial);
+    },
+    onNextTrial: () => {
+      sound.playTeleportStep();
+      controller.advanceNextTrial();
+    },
+    onToggleCameraMode: () => {
+      sound.playTeleportStep();
+      controller.toggleCameraMode();
     },
     onRotateAstrolabe: (ringIndex) => controller.rotateAstrolabe(ringIndex, 1),
     onRotateMirror: (mirrorIndex) => controller.rotateMirror(mirrorIndex, 1),
@@ -66,37 +83,71 @@ function bootstrap(): void {
 
   const handleSceneInteract = (action: SceneInteractAction): void => {
     if (hud.isAnyModalOpen()) return;
+    const isWalk = controller.getSnapshot().cameraMode === 'walk';
     switch (action.kind) {
       case 'pad':
         sound.playTeleportStep();
         controller.setStation(action.station);
+        scene.teleportToStation(action.station);
         break;
       case 'astrolabe-ring':
-        controller.setStation('astrolabe');
+        if (!isWalk) controller.setStation('astrolabe');
         controller.rotateAstrolabe(action.ringIndex, 1);
         break;
       case 'mirror':
-        controller.setStation('mirrors');
+        if (!isWalk) controller.setStation('mirrors');
         controller.rotateMirror(action.mirrorIndex, 1);
         break;
       case 'chime':
-        controller.setStation('chimes');
+        if (!isWalk) controller.setStation('chimes');
         controller.strikeChime(action.slotIndex);
         break;
       case 'chime-gong':
-        controller.setStation('chimes');
+        if (!isWalk) controller.setStation('chimes');
         controller.requestChimePulse();
         break;
       case 'apex-crown':
-        controller.setStation('apex');
+        if (!isWalk) controller.setStation('apex');
         controller.triggerApexCrown();
         break;
+    }
+  };
+
+  const triggerProximityInteract = (): void => {
+    const snap = controller.getSnapshot();
+    const nearby =
+      snap.cameraMode === 'walk'
+        ? scene.getNearbyWalkStation()
+        : snap.activeStation === 'overview'
+          ? null
+          : snap.activeStation;
+    if (!nearby) return;
+
+    if (nearby === 'astrolabe') {
+      const nextRing = snap.astrolabe.rings.findIndex((r) => r !== 0);
+      controller.rotateAstrolabe(nextRing >= 0 ? nextRing : 0, 1);
+    } else if (nearby === 'mirrors') {
+      const nextMirror = snap.mirrors.mirrors.findIndex(
+        (m) => m.orientation !== m.solutionOrientation,
+      );
+      controller.rotateMirror(nextMirror >= 0 ? nextMirror : 0, 1);
+    } else if (nearby === 'chimes') {
+      if (snap.chimes.solved) {
+        controller.requestChimePulse();
+      } else {
+        const order = getAscendingChimeSlots(snap.chimes);
+        const nextSlot = order[snap.chimes.progress] ?? 0;
+        controller.strikeChime(nextSlot);
+      }
+    } else if (nearby === 'apex') {
+      controller.triggerApexCrown();
     }
   };
 
   const scene = new ObservatoryScene(canvas, {
     onInteract: handleSceneInteract,
     onHoverChange: (label) => hud.setHoverLabel(label),
+    onProximityChange: (station) => hud.setWalkPrompt(station),
     onPulseBellAudio: (rank) => sound.playChimeBell(rank, true),
     onTick: (deltaSec) => {
       controller.tick(deltaSec);
@@ -156,7 +207,12 @@ function bootstrap(): void {
 
     scene.handleKey(e.code, true);
 
-    if (e.code === 'KeyR') {
+    if (e.code === 'KeyV') {
+      sound.playTeleportStep();
+      controller.toggleCameraMode();
+    } else if (e.code === 'KeyE') {
+      triggerProximityInteract();
+    } else if (e.code === 'KeyR') {
       scene.resetView();
       hud.showToast('Vantage point centered');
     } else if (e.code === 'KeyH') {
@@ -165,13 +221,17 @@ function bootstrap(): void {
       hud.toggleMute();
     } else if (e.code === 'Space') {
       const snap = controller.getSnapshot();
-      if (snap.activeStation === 'chimes') {
+      const station =
+        snap.cameraMode === 'walk' ? scene.getNearbyWalkStation() : snap.activeStation;
+      if (station === 'chimes') {
         e.preventDefault();
         controller.requestChimePulse();
       }
     } else if (STATION_KEYS[e.code]) {
       sound.playTeleportStep();
-      controller.setStation(STATION_KEYS[e.code]);
+      const st = STATION_KEYS[e.code];
+      controller.setStation(st);
+      scene.teleportToStation(st);
     }
   });
 
@@ -188,6 +248,17 @@ function bootstrap(): void {
     snapCameraToStation: (station: StationId) => {
       controller.setStation(station);
       scene.snapToStation(station);
+    },
+    setCameraMode: (mode: CameraMode, immediate: boolean = false) => {
+      controller.setCameraMode(mode);
+      scene.setCameraMode(mode, immediate);
+    },
+    setWalkPose: (x: number, z: number, yaw: number, pitch: number = 0.08) => {
+      controller.setCameraMode('walk');
+      scene.setWalkPose(x, z, yaw, pitch);
+    },
+    setTrial: (trial: TrialNumber) => {
+      controller.startTrial(trial);
     },
     setCinematicPose: (pose: CameraPreset, immediate: boolean = false) => {
       scene.setCinematicPose(pose, immediate);

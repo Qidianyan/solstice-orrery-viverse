@@ -31,6 +31,42 @@ export const WING_POSITIONS = {
   chimes: new THREE.Vector3(0, 0, -11.0),
 } as const;
 
+export const COLONNADE_PILLAR_COUNT = 16;
+export const COLONNADE_RADIUS = 16.5;
+export const SANCTUARY_WALK_MAX_RADIUS = 15.85;
+
+export interface CircleCollider {
+  x: number;
+  z: number;
+  radius: number;
+  kind: 'column' | 'monument';
+}
+
+export const COLONNADE_ANGLES: readonly number[] = Array.from(
+  { length: COLONNADE_PILLAR_COUNT },
+  (_, i) => (i / COLONNADE_PILLAR_COUNT) * Math.PI * 2 + Math.PI / COLONNADE_PILLAR_COUNT,
+);
+
+/**
+ * Shared physics colliders for First-Person Sanctuary Walkaround mode:
+ * all 16 outer fluted Doric basalt columns + major sanctuary monuments.
+ */
+export const SANCTUARY_COLLIDERS: readonly CircleCollider[] = [
+  ...COLONNADE_ANGLES.map((a) => ({
+    x: Math.cos(a) * COLONNADE_RADIUS,
+    z: Math.sin(a) * COLONNADE_RADIUS,
+    radius: 0.92,
+    kind: 'column' as const,
+  })),
+  // Central Solstice Apex Dais pedestal
+  { x: 0, z: 0, radius: 2.85, kind: 'monument' },
+  // West Meridian Astrolabe cradle
+  { x: -10.5, z: 1.5, radius: 2.35, kind: 'monument' },
+  // North Sun-Chimes twin Doric gateway columns
+  { x: -4.05, z: -11.0, radius: 0.95, kind: 'column' },
+  { x: 4.05, z: -11.0, radius: 0.95, kind: 'column' },
+];
+
 export const STEPPING_PAD_SPECS: ReadonlyArray<{
   station: StationId;
   label: string;
@@ -346,12 +382,10 @@ export function createObservatoryEnvironment(
   brazierRimGeo.rotateX(Math.PI / 2);
   const flameGeo = trackGeo(new THREE.OctahedronGeometry(0.24, 1));
 
-  const pillarAngles = [
-    -2.78, -2.38, -1.98, -1.16, -0.78, -0.4, 0.4, 0.85, 1.3, 1.84, 2.28, 2.74,
-  ];
-  for (let i = 0; i < pillarAngles.length; i += 1) {
-    const a = pillarAngles[i];
-    const r = 16.8;
+  // 16 symmetrically spaced fluted Doric basalt columns around the circular sanctuary colonnade
+  for (let i = 0; i < COLONNADE_ANGLES.length; i += 1) {
+    const a = COLONNADE_ANGLES[i];
+    const r = COLONNADE_RADIUS;
     const px = Math.cos(a) * r;
     const pz = Math.sin(a) * r;
     const tall = i % 2 === 0;

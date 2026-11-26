@@ -1,6 +1,7 @@
 import type {
   AstrolabeState,
   BestRecord,
+  CameraMode,
   ChimesState,
   GameEvent,
   GamePhase,
@@ -8,11 +9,14 @@ import type {
   MirrorCourtyardState,
   ScoreBreakdown,
   StationId,
+  TrialNumber,
 } from './types';
 import { generateRandomSeed, getDailySeedString } from './prng';
 import {
   createSeededPuzzles,
+  createTrialPuzzles,
   getAscendingChimeSlots,
+  getTrialMetadata,
   rotateAstrolabeRing,
   rotateMirrorObelisk,
   strikeChimeSlot,
@@ -58,6 +62,10 @@ export class GameController {
   private seed: string;
   private isDailySeed = true;
   private activeStation: StationId = 'overview';
+  private cameraMode: CameraMode = 'orbit';
+  private currentTrial: TrialNumber = 1;
+  private useTrialMode = false;
+  private completedTrials = new Set<TrialNumber>();
   private durationSec: number;
   private timeRemainingSec: number;
   private moves = 0;
@@ -72,15 +80,29 @@ export class GameController {
 
   private listeners = new Set<SnapshotListener>();
 
-  constructor(options?: { seed?: string; durationSec?: number; isDailySeed?: boolean }) {
+  constructor(options?: {
+    seed?: string;
+    durationSec?: number;
+    isDailySeed?: boolean;
+    trial?: TrialNumber;
+  }) {
     this.durationSec = options?.durationSec ?? DEFAULT_ECLIPSE_DURATION_SEC;
     this.timeRemainingSec = this.durationSec;
     this.seed = options?.seed ?? getDailySeedString();
     this.isDailySeed = options?.isDailySeed ?? true;
-    const initial = createSeededPuzzles(this.seed);
-    this.astrolabe = initial.astrolabe;
-    this.mirrors = initial.mirrors;
-    this.chimes = initial.chimes;
+    if (options?.trial) {
+      this.currentTrial = options.trial;
+      this.useTrialMode = true;
+      const initial = createTrialPuzzles(options.trial, this.seed);
+      this.astrolabe = initial.astrolabe;
+      this.mirrors = initial.mirrors;
+      this.chimes = initial.chimes;
+    } else {
+      const initial = createSeededPuzzles(this.seed);
+      this.astrolabe = initial.astrolabe;
+      this.mirrors = initial.mirrors;
+      this.chimes = initial.chimes;
+    }
     this.bestRecord = readBestRecord();
   }
 
@@ -103,15 +125,27 @@ export class GameController {
       seed: this.seed,
       isDailySeed: this.isDailySeed,
       activeStation: this.activeStation,
+      cameraMode: this.cameraMode,
+      currentTrial: this.currentTrial,
+      trialMeta: getTrialMetadata(this.currentTrial),
+      completedTrials: Array.from(this.completedTrials).sort((a, b) => a - b),
       timeRemainingSec: this.timeRemainingSec,
       durationSec: this.durationSec,
       moves: this.moves,
       astrolabe: {
         rings: [...this.astrolabe.rings] as [number, number, number],
+        stepCount: this.astrolabe.stepCount,
+        couplings: this.astrolabe.couplings ? [...this.astrolabe.couplings] : [],
         solved: this.astrolabe.solved,
       },
       mirrors: {
         ...this.mirrors,
+        collectors: (this.mirrors.collectors ?? [this.mirrors.collector]).map((c) => ({ ...c })),
+        splitters: (this.mirrors.splitters ?? []).map((s) => ({
+          ...s,
+          position: { ...s.position },
+        })),
+        litCollectorIndices: [...(this.mirrors.litCollectorIndices ?? [])],
         mirrors: this.mirrors.mirrors.map((m) => ({ ...m, position: { ...m.position } })),
         beamSegments: this.mirrors.beamSegments.map((s) => ({
           ...s,
@@ -143,14 +177,32 @@ export class GameController {
 
   public startDailyRitual(date: Date = new Date()): void {
     const dailySeed = getDailySeedString(date);
+    this.useTrialMode = true;
+    this.currentTrial = 1;
     this.resetRun(dailySeed, true, 'playing');
   }
 
+  public startTrial(trial: TrialNumber): void {
+    this.useTrialMode = true;
+    this.currentTrial = trial;
+    this.resetRun(this.seed, this.isDailySeed, this.phase === 'sandbox' ? 'sandbox' : 'playing');
+    this.emit({ type: 'trial-changed', trial });
+  }
+
+  public advanceNextTrial(): boolean {
+    if (this.currentTrial >= 7) return false;
+    const next = (this.currentTrial + 1) as TrialNumber;
+    this.startTrial(next);
+    return true;
+  }
+
   public startSeededRitual(seed: string, isDaily: boolean = false): void {
+    this.useTrialMode = false;
     this.resetRun(seed, isDaily, 'playing');
   }
 
   public startRandomRitual(): void {
+    this.useTrialMode = true;
     this.resetRun(generateRandomSeed(), false, 'playing');
   }
 
@@ -160,14 +212,21 @@ export class GameController {
 
   public enterSandboxMode(keepCurrentSolvedState: boolean = true): void {
     if (!keepCurrentSolvedState) {
-      const fresh = createSeededPuzzles(this.seed);
+      const fresh = this.useTrialMode
+        ? createTrialPuzzles(this.currentTrial, this.seed)
+        : createSeededPuzzles(this.seed);
       this.astrolabe = fresh.astrolabe;
       this.mirrors = fresh.mirrors;
       this.chimes = fresh.chimes;
       this.apexIgnited = false;
     }
     this.phase = 'sandbox';
-    this.emit({ type: 'ritual-started', seed: this.seed, mode: 'sandbox' });
+    this.emit({
+      type: 'ritual-started',
+      seed: this.seed,
+      mode: 'sandbox',
+      trial: this.currentTrial,
+    });
   }
 
   private resetRun(seed: string, isDaily: boolean, targetPhase: GamePhase): void {
@@ -177,7 +236,9 @@ export class GameController {
     this.activeStation = 'overview';
     this.timeRemainingSec = this.durationSec;
     this.moves = 0;
-    const puzzles = createSeededPuzzles(seed);
+    const puzzles = this.useTrialMode
+      ? createTrialPuzzles(this.currentTrial, seed)
+      : createSeededPuzzles(seed);
     this.astrolabe = puzzles.astrolabe;
     this.mirrors = puzzles.mirrors;
     this.chimes = puzzles.chimes;
@@ -187,6 +248,7 @@ export class GameController {
       type: 'ritual-started',
       seed,
       mode: targetPhase === 'sandbox' ? 'sandbox' : isDaily ? 'daily' : 'random',
+      trial: this.currentTrial,
     });
   }
 
@@ -194,6 +256,18 @@ export class GameController {
     if (this.activeStation === station) return;
     this.activeStation = station;
     this.emit({ type: 'station-changed', station });
+  }
+
+  public setCameraMode(mode: CameraMode): void {
+    if (this.cameraMode === mode) return;
+    this.cameraMode = mode;
+    this.emit({ type: 'camera-mode-changed', mode });
+  }
+
+  public toggleCameraMode(): CameraMode {
+    const next: CameraMode = this.cameraMode === 'orbit' ? 'walk' : 'orbit';
+    this.setCameraMode(next);
+    return next;
   }
 
   public tick(deltaSec: number): void {
@@ -223,6 +297,7 @@ export class GameController {
       ringIndex,
       aligned: result.aligned,
       solved: result.justSolved,
+      coupledRings: result.coupledRings,
     });
   }
 
@@ -277,6 +352,8 @@ export class GameController {
       this.emit({ type: 'apex-locked', remaining: 3 - solvedCount });
       return false;
     }
+
+    this.completedTrials.add(this.currentTrial);
 
     if (this.phase === 'sandbox') {
       this.apexIgnited = true;

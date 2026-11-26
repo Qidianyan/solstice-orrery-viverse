@@ -4,6 +4,12 @@ export type StationId = 'overview' | 'astrolabe' | 'mirrors' | 'chimes' | 'apex'
 
 export type PuzzleId = 'astrolabe' | 'mirrors' | 'chimes';
 
+export type CameraMode = 'orbit' | 'walk';
+
+export type TrialNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export type SkyEvolutionStage = 'noon-gold' | 'amber-dusk' | 'crimson-eclipse' | 'dawn-corona';
+
 export interface Vec2 {
   x: number;
   z: number;
@@ -23,6 +29,14 @@ export interface MirrorNode {
   solutionOrientation: MirrorOrientation;
 }
 
+export interface SplitterNode {
+  id: string;
+  label: string;
+  position: Vec2;
+  /** Diagonal crystal plane orientation splitting incoming ray into transmitted + reflected orthogonal rays */
+  orientation: MirrorOrientation;
+}
+
 export interface PillarObstacle {
   position: Vec2;
   radius: number;
@@ -31,8 +45,10 @@ export interface PillarObstacle {
 export interface BeamSegment {
   from: Vec2;
   to: Vec2;
-  hitKind: 'mirror-reflect' | 'mirror-back' | 'pillar' | 'collector' | 'boundary';
+  hitKind: 'mirror-reflect' | 'mirror-back' | 'splitter' | 'pillar' | 'collector' | 'boundary';
   hitMirrorIndex?: number;
+  hitCollectorIndex?: number;
+  branchDepth?: number;
 }
 
 export interface MirrorLayoutSpec {
@@ -41,6 +57,10 @@ export interface MirrorLayoutSpec {
   emitter: Vec2;
   emitterDir: Vec2;
   collector: Vec2;
+  /** Optional multi-collector list for splitter trials; defaults to [collector]. */
+  collectors?: Vec2[];
+  /** Optional beam splitter prisms splitting a beam into two orthogonal rays. */
+  splitters?: SplitterNode[];
   pillars: PillarObstacle[];
   mirrors: Array<{
     id: string;
@@ -50,9 +70,23 @@ export interface MirrorLayoutSpec {
   }>;
 }
 
+export interface GearCoupling {
+  sourceRing: number;
+  targetRing: number;
+  /** Primary step delta applied to sourceRing per click (e.g., +2 for 30° on 15° detent wheel). */
+  sourceStep: number;
+  /** Coupled step delta applied to targetRing per click (e.g., -1 for -15°, ratio 1:-0.5). */
+  targetStep: number;
+  ratioLabel: string;
+}
+
 export interface AstrolabeState {
-  /** Ring steps in 0..7 (45 deg each). Zenith alignment target is 0. */
+  /** Ring steps in 0..(stepCount-1). Zenith alignment target is 0. */
   rings: [number, number, number];
+  /** Discrete detent count per revolution (8 for classic 45°, 24 for 15° magnetic detent). */
+  stepCount?: number;
+  /** Active mechanical gear couplings between concentric bronze rings. */
+  couplings?: GearCoupling[];
   solved: boolean;
 }
 
@@ -62,6 +96,9 @@ export interface MirrorCourtyardState {
   emitter: Vec2;
   emitterDir: Vec2;
   collector: Vec2;
+  collectors?: Vec2[];
+  splitters?: SplitterNode[];
+  litCollectorIndices?: number[];
   pillars: PillarObstacle[];
   mirrors: MirrorNode[];
   beamSegments: BeamSegment[];
@@ -79,6 +116,16 @@ export interface ChimesState {
   /** Timestamp/counter incremented on wrong strike for visual/audio feedback. */
   lastMistakeTick: number;
   solved: boolean;
+}
+
+export interface TrialMetadata {
+  number: TrialNumber;
+  title: string;
+  subtitle: string;
+  skyStage: SkyEvolutionStage;
+  hasCoupledGears: boolean;
+  hasBeamSplitter: boolean;
+  targetBeamCount: number;
 }
 
 export interface ScoreBreakdown {
@@ -102,6 +149,10 @@ export interface GameSnapshot {
   seed: string;
   isDailySeed: boolean;
   activeStation: StationId;
+  cameraMode: CameraMode;
+  currentTrial: TrialNumber;
+  trialMeta: TrialMetadata;
+  completedTrials: TrialNumber[];
   timeRemainingSec: number;
   durationSec: number;
   moves: number;
@@ -117,9 +168,11 @@ export interface GameSnapshot {
 }
 
 export type GameEvent =
-  | { type: 'ritual-started'; seed: string; mode: 'daily' | 'random' | 'sandbox' }
+  | { type: 'ritual-started'; seed: string; mode: 'daily' | 'random' | 'sandbox'; trial: TrialNumber }
+  | { type: 'trial-changed'; trial: TrialNumber }
+  | { type: 'camera-mode-changed'; mode: CameraMode }
   | { type: 'station-changed'; station: StationId }
-  | { type: 'astrolabe-rotated'; ringIndex: number; aligned: boolean; solved: boolean }
+  | { type: 'astrolabe-rotated'; ringIndex: number; aligned: boolean; solved: boolean; coupledRings: number[] }
   | { type: 'mirror-rotated'; mirrorIndex: number; solved: boolean; beamHitsCollector: boolean }
   | { type: 'chime-struck'; slotIndex: number; rank: number; correct: boolean; solved: boolean }
   | { type: 'chime-pulse-requested'; sequenceSlots: number[] }

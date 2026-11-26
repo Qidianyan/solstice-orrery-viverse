@@ -13,6 +13,8 @@
   --gold-active-fill: rgba(242, 184, 75, 0.24);
   --ember-core: #d45b22;
   --ember-glow: #f0852e;
+  --crimson-eclipse: #c83e1d;
+  --crimson-bg: #2a0e09;
   --quartz-ink: #f2efe9;
   --quartz-muted: #c2b6a6;
   --ink-on-gold: #120d0a;
@@ -136,7 +138,7 @@ button:disabled {
 
 .brand-seed {
   font-size: 0.75rem;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--gold-molten);
 }
 
@@ -161,7 +163,7 @@ button:disabled {
 
 .telemetry-label {
   font-size: 0.78rem;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--quartz-muted);
 }
 
@@ -251,6 +253,120 @@ button:disabled {
   color: var(--gold-molten);
 }
 
+/* 7-Trial Progressive Celestial Strip (top-left architectural bar) */
+.trial-strip {
+  position: absolute;
+  top: max(68px, calc(env(safe-area-inset-top) + 56px));
+  left: max(16px, env(safe-area-inset-left));
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 2px;
+  background-color: var(--obsidian-panel);
+  border-left: 2px solid var(--border-gold);
+  z-index: 10;
+  max-width: calc(100dvw - 32px);
+  overflow-x: auto;
+}
+
+.trial-strip-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--quartz-muted);
+  padding-right: 4px;
+}
+
+.trial-btn {
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 2px;
+  border: 1px solid var(--border-bronze);
+  background-color: var(--obsidian-elevated);
+  color: var(--quartz-muted);
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.trial-btn:hover {
+  background-color: var(--obsidian-hover);
+  border-color: var(--border-gold);
+  color: var(--quartz-ink);
+}
+
+.trial-btn.is-done {
+  color: var(--gold-molten);
+  border-color: var(--border-gold);
+}
+
+.trial-btn.is-active {
+  background-color: var(--gold-molten);
+  border-color: var(--gold-bright);
+  color: var(--ink-on-gold);
+}
+
+.trial-stage-tag {
+  margin-left: 4px;
+  padding: 4px 8px;
+  border-radius: 2px;
+  background-color: var(--obsidian-surface);
+  border: 1px solid var(--border-bronze);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--gold-molten);
+  white-space: nowrap;
+}
+
+.trial-stage-tag.is-eclipse {
+  background-color: var(--crimson-bg);
+  border-color: var(--crimson-eclipse);
+  color: var(--gold-bright);
+}
+
+/* Walkaround proximity interaction prompt */
+.walk-prompt {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 4px;
+  background-color: var(--obsidian-panel);
+  border: 1px solid var(--border-gold-strong);
+  color: var(--quartz-ink);
+  font-size: 0.86rem;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 13;
+  white-space: nowrap;
+}
+
+.walk-prompt[hidden] {
+  display: none;
+}
+
+.walk-prompt kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background-color: var(--gold-molten);
+  color: var(--ink-on-gold);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 /* Hover reticle pill and unobtrusive status toast */
 .hover-pill {
   position: absolute;
@@ -272,7 +388,7 @@ button:disabled {
 .toast-banner {
   position: absolute;
   left: 50%;
-  top: 116px;
+  top: 68px;
   transform: translateX(-50%);
   padding: 8px 16px;
   border-radius: 4px;
@@ -691,7 +807,7 @@ dialog.sanctuary-dialog[open] {
 
 .stat-label {
   font-size: 0.76rem;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--quartz-muted);
 }
 
@@ -741,6 +857,12 @@ dialog.sanctuary-dialog[open] {
   .hud-top {
     flex-wrap: wrap;
     justify-content: center;
+  }
+
+  .trial-strip {
+    top: max(124px, calc(env(safe-area-inset-top) + 112px));
+    left: 50%;
+    transform: translateX(-50%);
   }
 
   .dialog-pillars {
