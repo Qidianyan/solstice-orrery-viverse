@@ -183,10 +183,15 @@ export class GameController {
   }
 
   public startTrial(trial: TrialNumber): void {
+    const safeTrial = Math.max(1, Math.min(7, Math.round(trial))) as TrialNumber;
     this.useTrialMode = true;
-    this.currentTrial = trial;
-    this.resetRun(this.seed, this.isDailySeed, this.phase === 'sandbox' ? 'sandbox' : 'playing');
-    this.emit({ type: 'trial-changed', trial });
+    this.currentTrial = safeTrial;
+    this.resetRun(
+      this.seed,
+      this.isDailySeed,
+      this.phase === 'sandbox' ? 'sandbox' : 'playing',
+      { type: 'trial-changed', trial: safeTrial },
+    );
   }
 
   public advanceNextTrial(): boolean {
@@ -229,7 +234,12 @@ export class GameController {
     });
   }
 
-  private resetRun(seed: string, isDaily: boolean, targetPhase: GamePhase): void {
+  private resetRun(
+    seed: string,
+    isDaily: boolean,
+    targetPhase: GamePhase,
+    customEvent?: GameEvent,
+  ): void {
     this.seed = seed;
     this.isDailySeed = isDaily;
     this.phase = targetPhase;
@@ -244,12 +254,14 @@ export class GameController {
     this.chimes = puzzles.chimes;
     this.apexIgnited = false;
     this.score = null;
-    this.emit({
-      type: 'ritual-started',
-      seed,
-      mode: targetPhase === 'sandbox' ? 'sandbox' : isDaily ? 'daily' : 'random',
-      trial: this.currentTrial,
-    });
+    this.emit(
+      customEvent ?? {
+        type: 'ritual-started',
+        seed,
+        mode: targetPhase === 'sandbox' ? 'sandbox' : isDaily ? 'daily' : 'random',
+        trial: this.currentTrial,
+      },
+    );
   }
 
   public setStation(station: StationId): void {
@@ -370,6 +382,7 @@ export class GameController {
 
     this.apexIgnited = true;
     this.phase = 'won';
+    this.cameraMode = 'orbit';
     this.score = calculateSolsticeScore(this.timeRemainingSec, this.moves, this.durationSec);
 
     if (!this.bestRecord || this.score.totalScore > this.bestRecord.score) {

@@ -74,12 +74,21 @@ export function resolveWalkCollision(
   maxRadius: number = SANCTUARY_WALK_MAX_RADIUS,
   playerRadius: number = PLAYER_COLLISION_RADIUS,
 ): { x: number; z: number; collided: boolean } {
-  let x = candidate.x;
-  let z = candidate.z;
-  let collided = false;
+  let x = Number.isFinite(candidate.x) ? candidate.x : 0;
+  let z = Number.isFinite(candidate.z) ? candidate.z : 12.6;
+  let collided = !Number.isFinite(candidate.x) || !Number.isFinite(candidate.z);
+  const safeOuter = Math.max(2, maxRadius - playerRadius);
 
-  // Two relaxation passes guarantee clean corner resolution between adjacent obstacles
-  for (let pass = 0; pass < 2; pass += 1) {
+  // Three relaxation passes: clamp outer parapet FIRST so column repulsion always pushes cleanly inward
+  for (let pass = 0; pass < 3; pass += 1) {
+    const r = Math.hypot(x, z);
+    if (r > safeOuter) {
+      collided = true;
+      const scale = safeOuter / r;
+      x *= scale;
+      z *= scale;
+    }
+
     for (const col of colliders) {
       const dx = x - col.x;
       const dz = z - col.z;
@@ -93,19 +102,16 @@ export function resolveWalkCollision(
           x += dx * push;
           z += dz * push;
         } else {
-          x += minDist;
+          // Coincident center fallback: push radially inward toward sanctuary center (or +X if at origin)
+          const colR = Math.hypot(col.x, col.z);
+          if (colR > 1e-4) {
+            x -= (col.x / colR) * minDist;
+            z -= (col.z / colR) * minDist;
+          } else {
+            x += minDist;
+          }
         }
       }
-    }
-
-    // Circular outer sanctuary parapet boundary
-    const safeOuter = Math.max(2, maxRadius - playerRadius);
-    const r = Math.hypot(x, z);
-    if (r > safeOuter) {
-      collided = true;
-      const scale = safeOuter / r;
-      x *= scale;
-      z *= scale;
     }
   }
 

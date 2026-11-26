@@ -146,4 +146,58 @@ describe('V4 7-Trial progressive puzzle catalog, coupled bronze gears & beam spl
     expect(ctrl.getSnapshot().currentTrial).toBe(7);
     expect(ctrl.advanceNextTrial()).toBe(false);
   });
+
+  it('guards boundary inputs, cyclic mirror loops, single-emit trial switching, and victory walk->orbit sync', () => {
+    // 1. Out-of-bounds indices leave puzzle state intact without throwing
+    const { astrolabe, mirrors } = createTrialPuzzles(5, 'SOL-EDGE-TEST');
+    expect(rotateAstrolabeRing(astrolabe, -1, 1).next).toBe(astrolabe);
+    expect(rotateAstrolabeRing(astrolabe, 99, 1).next).toBe(astrolabe);
+    expect(rotateMirrorObelisk(mirrors, -1, 1).next).toBe(mirrors);
+    expect(rotateMirrorObelisk(mirrors, 42, 1).next).toBe(mirrors);
+
+    // 2. Closed 4-mirror optical loop terminates cleanly without infinite recursion
+    const cyclic = traceCourtyardBeams({
+      emitter: { x: -3, z: -2 },
+      emitterDir: { x: 1, z: 0 },
+      collectors: [{ x: 0, z: 0 }],
+      pillars: [],
+      mirrors: [
+        { id: 'c1', label: 'A', position: { x: 2, z: -2 }, orientation: 2, solutionOrientation: 2 },
+        { id: 'c2', label: 'B', position: { x: 2, z: 2 }, orientation: 3, solutionOrientation: 3 },
+        { id: 'c3', label: 'C', position: { x: -2, z: 2 }, orientation: 0, solutionOrientation: 0 },
+        { id: 'c4', label: 'D', position: { x: -2, z: -2 }, orientation: 1, solutionOrientation: 1 },
+      ],
+    });
+    expect(cyclic.segments.length).toBeGreaterThan(0);
+    expect(cyclic.segments.length).toBeLessThanOrEqual(24);
+    expect(cyclic.hitsCollector).toBe(false);
+
+    // 3. startTrial emits once with trial-changed, and winning from walk mode resets cameraMode to orbit
+    const ctrl = new GameController({ seed: 'SOL-EDGE-TEST', trial: 1 });
+    ctrl.startDailyRitual();
+    let emitCount = 0;
+    const unsub = ctrl.subscribe(() => {
+      emitCount += 1;
+    });
+    emitCount = 0;
+    ctrl.startTrial(5);
+    expect(emitCount).toBe(1);
+    expect(ctrl.getSnapshot().lastEvent).toEqual({ type: 'trial-changed', trial: 5 });
+    unsub();
+
+    ctrl.setCameraMode('walk');
+    const snap = ctrl.getSnapshot();
+    for (const r of solveAstrolabePlan(snap.astrolabe)) ctrl.rotateAstrolabe(r, 1);
+    for (let i = 0; i < snap.mirrors.mirrors.length; i += 1) {
+      while (ctrl.getSnapshot().mirrors.mirrors[i].orientation !== snap.mirrors.mirrors[i].solutionOrientation) {
+        ctrl.rotateMirror(i, 1);
+      }
+    }
+    for (let rank = 0; rank < 4; rank += 1) {
+      ctrl.strikeChime(ctrl.getSnapshot().chimes.slotRanks.indexOf(rank));
+    }
+    expect(ctrl.triggerApexCrown()).toBe(true);
+    expect(ctrl.getSnapshot().phase).toBe('won');
+    expect(ctrl.getSnapshot().cameraMode).toBe('orbit');
+  });
 });

@@ -29,23 +29,36 @@ describe('First-Person Sanctuary Walkaround circular collision & proximity detec
     }
   });
 
-  it('pushes walker cleanly outside every single Doric column and interior monument collider', () => {
+  it('pushes walker cleanly outside EVERY single Doric column (16 perimeter + 2 gateway) and interior monument collider', () => {
     for (const col of SANCTUARY_COLLIDERS) {
-      // Attempt to walk directly into the column interior
+      // Attempt to walk directly into the collider interior
       const attempt = { x: col.x + 0.15, z: col.z - 0.1 };
       const res = resolveWalkCollision(attempt);
       expect(res.collided).toBe(true);
 
       const distToCenter = Math.hypot(res.x - col.x, res.z - col.z);
       const minAllowed = col.radius + PLAYER_COLLISION_RADIUS - 1e-3;
-      // Outer columns sit near the parapet wall, so either cleared or clamped strictly within safe boundary
+      expect(distToCenter).toBeGreaterThanOrEqual(minAllowed);
       expect(Math.hypot(res.x, res.z)).toBeLessThanOrEqual(
         SANCTUARY_WALK_MAX_RADIUS - PLAYER_COLLISION_RADIUS + 1e-3,
       );
-      if (col.kind !== 'column') {
-        expect(distToCenter).toBeGreaterThanOrEqual(minAllowed);
-      }
     }
+  });
+
+  it('safely resolves exact collider-center coincidence and NaN inputs without returning NaN', () => {
+    const col0 = SANCTUARY_COLLIDERS[0];
+    const exactCenter = resolveWalkCollision({ x: col0.x, z: col0.z });
+    expect(exactCenter.collided).toBe(true);
+    expect(Number.isFinite(exactCenter.x)).toBe(true);
+    expect(Number.isFinite(exactCenter.z)).toBe(true);
+    expect(Math.hypot(exactCenter.x - col0.x, exactCenter.z - col0.z)).toBeGreaterThanOrEqual(
+      col0.radius + PLAYER_COLLISION_RADIUS - 1e-3,
+    );
+
+    const nanAttempt = resolveWalkCollision({ x: Number.NaN, z: Number.POSITIVE_INFINITY });
+    expect(nanAttempt.collided).toBe(true);
+    expect(Number.isFinite(nanAttempt.x)).toBe(true);
+    expect(Number.isFinite(nanAttempt.z)).toBe(true);
   });
 
   it('clamps walking coordinates inside the outer circular sanctuary parapet wall', () => {

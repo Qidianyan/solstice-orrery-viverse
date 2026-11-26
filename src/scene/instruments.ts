@@ -537,6 +537,23 @@ export function createObservatoryInstruments(
     yawVel: number;
   }> = [];
   const dynamicMirrorInteractables: THREE.Object3D[] = [];
+  const dynamicMirrorGeos: THREE.BufferGeometry[] = [];
+  const dynamicMirrorMats: THREE.Material[] = [];
+  const trackDynGeo = <T extends THREE.BufferGeometry>(g: T): T => {
+    dynamicMirrorGeos.push(g);
+    return g;
+  };
+  const trackDynMat = <T extends THREE.Material>(m: T): T => {
+    dynamicMirrorMats.push(m);
+    return m;
+  };
+  function disposeDynamicMirrorResources(): void {
+    for (const g of dynamicMirrorGeos) g.dispose();
+    for (const m of dynamicMirrorMats) m.dispose();
+    dynamicMirrorGeos.length = 0;
+    dynamicMirrorMats.length = 0;
+  }
+
   const collectorLight = new THREE.PointLight(PALETTE.moltenGold, 2.0, 16, 1.5);
   collectorLight.position.set(0, 2.6, 0);
   mirrorRoot.add(collectorLight);
@@ -553,6 +570,7 @@ export function createObservatoryInstruments(
     while (mirrorDynamicGroup.children.length > 0) {
       mirrorDynamicGroup.remove(mirrorDynamicGroup.children[0]);
     }
+    disposeDynamicMirrorResources();
 
     const mState = snapshot.mirrors;
     activeMirrorLayoutId = mState.layoutId;
@@ -560,43 +578,43 @@ export function createObservatoryInstruments(
     // 1. Solar Emitter Monolith
     const emitterGroup = new THREE.Group();
     emitterGroup.position.set(mState.emitter.x, 0, mState.emitter.z);
-    const eStep = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.72, 0.86, 0.32, 8)), carvedBasaltMat);
+    const eStep = new THREE.Mesh(trackDynGeo(new THREE.CylinderGeometry(0.72, 0.86, 0.32, 8)), carvedBasaltMat);
     eStep.position.y = 0.16;
     emitterGroup.add(eStep);
     const ePed = new THREE.Mesh(
-      trackGeo(createFlutedDoricGeometry(0.45, 0.55, 1.15, 12, 36, 6)),
+      trackDynGeo(createFlutedDoricGeometry(0.45, 0.55, 1.15, 12, 36, 6)),
       carvedBasaltMat,
     );
     ePed.position.y = 0.88;
     ePed.castShadow = true;
     emitterGroup.add(ePed);
-    const eCollar = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.48, 0.085, 12, 28)), bronzeMat);
+    const eCollar = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.48, 0.085, 12, 28)), bronzeMat);
     eCollar.position.y = MIRROR_BEAM_Y;
     eCollar.rotation.y = Math.atan2(mState.emitterDir.x, mState.emitterDir.z);
     emitterGroup.add(eCollar);
-    const eOrb = new THREE.Mesh(trackGeo(new THREE.IcosahedronGeometry(0.32, 1)), emitterOrbMat);
+    const eOrb = new THREE.Mesh(trackDynGeo(new THREE.IcosahedronGeometry(0.32, 1)), emitterOrbMat);
     eOrb.position.y = MIRROR_BEAM_Y;
     emitterGroup.add(eOrb);
     mirrorDynamicGroup.add(emitterGroup);
 
     // 2. Collector Crystal Prisms (1 in Trials 1-4, 2 in Trials 5-6, 3 in Trial 7!)
     const collectors = mState.collectors ?? [mState.collector];
-    const prongGeo = trackGeo(new THREE.ConeGeometry(0.075, 0.7, 5));
+    const prongGeo = trackDynGeo(new THREE.ConeGeometry(0.075, 0.7, 5));
 
     collectors.forEach((colPos) => {
       const colGroup = new THREE.Group();
       colGroup.position.set(colPos.x, 0, colPos.z);
 
-      const cPlinth = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.76, 0.92, 0.32, 8)), carvedBasaltMat);
+      const cPlinth = new THREE.Mesh(trackDynGeo(new THREE.CylinderGeometry(0.76, 0.92, 0.32, 8)), carvedBasaltMat);
       cPlinth.position.y = 0.16;
       colGroup.add(cPlinth);
 
-      const cBase = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.54, 0.72, 0.9, 8)), darkBronzeMat);
+      const cBase = new THREE.Mesh(trackDynGeo(new THREE.CylinderGeometry(0.54, 0.72, 0.9, 8)), darkBronzeMat);
       cBase.position.y = 0.76;
       cBase.castShadow = true;
       colGroup.add(cBase);
 
-      const cCradle = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.58, 0.07, 10, 28)), bronzeMat);
+      const cCradle = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.58, 0.07, 10, 28)), bronzeMat);
       cCradle.rotation.x = Math.PI / 2;
       cCradle.position.y = 1.24;
       colGroup.add(cCradle);
@@ -610,7 +628,7 @@ export function createObservatoryInstruments(
         colGroup.add(prong);
       }
 
-      const prismMat = trackMat(
+      const prismMat = trackDynMat(
         new THREE.MeshPhysicalMaterial({
           color: PALETTE.solarCore,
           emissive: PALETTE.solarEmber,
@@ -622,12 +640,12 @@ export function createObservatoryInstruments(
           reflectivity: 1.0,
         }),
       );
-      const outerMesh = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.46, 0)), prismMat);
+      const outerMesh = new THREE.Mesh(trackDynGeo(new THREE.OctahedronGeometry(0.46, 0)), prismMat);
       outerMesh.scale.set(0.9, 1.38, 0.9);
       outerMesh.position.y = MIRROR_BEAM_Y + 0.1;
       colGroup.add(outerMesh);
 
-      const innerMesh = new THREE.Mesh(trackGeo(new THREE.IcosahedronGeometry(0.25, 0)), emitterOrbMat);
+      const innerMesh = new THREE.Mesh(trackDynGeo(new THREE.IcosahedronGeometry(0.25, 0)), emitterOrbMat);
       innerMesh.position.y = MIRROR_BEAM_Y + 0.1;
       colGroup.add(innerMesh);
 
@@ -636,7 +654,7 @@ export function createObservatoryInstruments(
         uTime: { value: 0 },
         uIntensity: { value: 0.65 },
       };
-      const fresnelMat = trackMat(
+      const fresnelMat = trackDynMat(
         new THREE.ShaderMaterial({
           vertexShader: PRISM_FRESNEL_VERTEX,
           fragmentShader: PRISM_FRESNEL_FRAGMENT,
@@ -660,17 +678,17 @@ export function createObservatoryInstruments(
       const spGroup = new THREE.Group();
       spGroup.position.set(sp.position.x, 0, sp.position.z);
 
-      const spBase = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(0.52, 0.68, 1.1, 8)), darkBronzeMat);
+      const spBase = new THREE.Mesh(trackDynGeo(new THREE.CylinderGeometry(0.52, 0.68, 1.1, 8)), darkBronzeMat);
       spBase.position.y = 0.55;
       spBase.castShadow = true;
       spGroup.add(spBase);
 
-      const gimbal = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.56, 0.055, 10, 28)), bronzeMat);
+      const gimbal = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.56, 0.055, 10, 28)), bronzeMat);
       gimbal.position.y = MIRROR_BEAM_Y;
       gimbal.rotation.y = orientationToYaw(sp.orientation);
       spGroup.add(gimbal);
 
-      const crystal = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.42, 0)), splitterCrystalMat);
+      const crystal = new THREE.Mesh(trackDynGeo(new THREE.OctahedronGeometry(0.42, 0)), splitterCrystalMat);
       crystal.scale.set(0.65, 1.48, 0.65);
       crystal.position.y = MIRROR_BEAM_Y;
       crystal.rotation.y = orientationToYaw(sp.orientation);
@@ -680,7 +698,7 @@ export function createObservatoryInstruments(
         uTime: { value: 0 },
         uIntensity: { value: 1.2 },
       };
-      const fresnelMat = trackMat(
+      const fresnelMat = trackDynMat(
         new THREE.ShaderMaterial({
           vertexShader: PRISM_FRESNEL_VERTEX,
           fragmentShader: PRISM_FRESNEL_FRAGMENT,
@@ -700,10 +718,10 @@ export function createObservatoryInstruments(
     }
 
     // 4. Fluted Doric Basalt Obstacle Pillars
-    const pillarShaftGeo = trackGeo(createFlutedDoricGeometry(0.44, 0.51, 2.55, 14, 42, 8));
-    const pillarBaseGeo = trackGeo(new THREE.BoxGeometry(1.12, 0.28, 1.12));
-    const pillarCapGeo = trackGeo(new THREE.BoxGeometry(1.14, 0.22, 1.14));
-    const pillarBandGeo = trackGeo(new THREE.TorusGeometry(0.49, 0.055, 8, 24));
+    const pillarShaftGeo = trackDynGeo(createFlutedDoricGeometry(0.44, 0.51, 2.55, 14, 42, 8));
+    const pillarBaseGeo = trackDynGeo(new THREE.BoxGeometry(1.12, 0.28, 1.12));
+    const pillarCapGeo = trackDynGeo(new THREE.BoxGeometry(1.14, 0.22, 1.14));
+    const pillarBandGeo = trackDynGeo(new THREE.TorusGeometry(0.49, 0.055, 8, 24));
     pillarBandGeo.rotateX(Math.PI / 2);
 
     for (const p of mState.pillars) {
@@ -728,14 +746,14 @@ export function createObservatoryInstruments(
     }
 
     // 5. Rotatable Geared Bronze & Basalt Reflector Obelisks
-    const baseTurntableGeo = trackGeo(new THREE.CylinderGeometry(0.7, 0.84, 0.42, 16));
-    const obeliskBackGeo = trackGeo(new THREE.BoxGeometry(1.1, 2.16, 0.34));
-    const pilasterGeo = trackGeo(new THREE.BoxGeometry(0.15, 2.24, 0.42));
-    const pedimentGeo = trackGeo(new THREE.ConeGeometry(0.84, 0.42, 4));
+    const baseTurntableGeo = trackDynGeo(new THREE.CylinderGeometry(0.7, 0.84, 0.42, 16));
+    const obeliskBackGeo = trackDynGeo(new THREE.BoxGeometry(1.1, 2.16, 0.34));
+    const pilasterGeo = trackDynGeo(new THREE.BoxGeometry(0.15, 2.24, 0.42));
+    const pedimentGeo = trackDynGeo(new THREE.ConeGeometry(0.84, 0.42, 4));
     pedimentGeo.rotateY(Math.PI / 4);
-    const mirrorFaceGeo = trackGeo(new THREE.BoxGeometry(0.82, 1.6, 0.09));
-    const cogGeo = trackGeo(new THREE.BoxGeometry(0.1, 0.12, 0.13));
-    const arrowGeo = trackGeo(new THREE.ConeGeometry(0.21, 0.48, 4));
+    const mirrorFaceGeo = trackDynGeo(new THREE.BoxGeometry(0.82, 1.6, 0.09));
+    const cogGeo = trackDynGeo(new THREE.BoxGeometry(0.1, 0.12, 0.13));
+    const arrowGeo = trackDynGeo(new THREE.ConeGeometry(0.21, 0.48, 4));
     arrowGeo.rotateX(Math.PI / 2);
 
     mState.mirrors.forEach((node, idx) => {
@@ -758,7 +776,7 @@ export function createObservatoryInstruments(
         label: `Rotate ${node.label} (90° Clockwise)`,
       };
 
-      const ring = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(0.7, 0.062, 10, 28)), bronzeMat);
+      const ring = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.7, 0.062, 10, 28)), bronzeMat);
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 0.44;
       ring.userData.interactable = interactData;
@@ -1403,6 +1421,7 @@ export function createObservatoryInstruments(
     },
     getApexBloomFactor: () => apexBloomFactor,
     dispose: () => {
+      disposeDynamicMirrorResources();
       for (const g of geometries) g.dispose();
       for (const m of materials) m.dispose();
     },
