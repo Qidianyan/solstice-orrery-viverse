@@ -25,15 +25,22 @@ describe('V6-iter3 Judge onboarding cue, 0.6s trial transition & full 7-trial co
     expect(cue.isVisible()).toBe(false);
     expect(cue.dismiss()).toBe(false);
 
-    // Auto-timeout path after 3000ms (ignores non-positive/NaN ticks)
+    // Auto-timeout path after 3000ms (ignores non-positive/NaN/Infinity ticks and hidden ticks)
     const cue2 = new OnboardingCueController();
-    cue2.triggerOnce();
+    expect(cue2.dismiss()).toBe(false);
+    expect(cue2.tick(5000)).toBe(false);
+    expect(cue2.triggerOnce()).toBe(true);
     expect(cue2.tick(Number.NaN)).toBe(false);
+    expect(cue2.tick(Number.POSITIVE_INFINITY)).toBe(false);
+    expect(cue2.tick(-500)).toBe(false);
     expect(cue2.tick(0)).toBe(false);
     expect(cue2.tick(1500)).toBe(false);
     expect(cue2.isVisible()).toBe(true);
     expect(cue2.tick(1600)).toBe(true);
     expect(cue2.isVisible()).toBe(false);
+    // Once timed out, triggerOnce and subsequent ticks remain inactive
+    expect(cue2.tick(3000)).toBe(false);
+    expect(cue2.triggerOnce()).toBe(false);
   });
 
   it('completes a continuous 7-trial campaign (Trials I..VII) and records all 7/7 best tempo entries', () => {

@@ -271,6 +271,7 @@ export class ObservatoryHud {
     });
 
     this.cameraModeBtn.addEventListener('click', () => {
+      this.dismissOnboardingCue();
       this.actions.onToggleCameraMode();
     });
 
@@ -279,6 +280,7 @@ export class ObservatoryHud {
     this.onboardingCue.addEventListener('click', () => this.dismissOnboardingCue());
 
     this.req<HTMLButtonElement>('btn-records').addEventListener('click', () => {
+      this.dismissOnboardingCue();
       if (this.currentSnapshot) {
         this.renderRecordsModal(this.currentSnapshot);
       }
@@ -291,6 +293,7 @@ export class ObservatoryHud {
       btn.addEventListener('click', () => {
         const trialNum = Number(btn.dataset.trial) as TrialNumber;
         if (trialNum >= 1 && trialNum <= 7) {
+          this.dismissOnboardingCue();
           this.closeDialog(this.modalTitle);
           this.closeDialog(this.modalVictory);
           this.closeDialog(this.modalTimeout);
@@ -299,10 +302,14 @@ export class ObservatoryHud {
       });
     });
 
-    this.hintBtn.addEventListener('click', () => this.toggleHint());
+    this.hintBtn.addEventListener('click', () => {
+      this.dismissOnboardingCue();
+      this.toggleHint();
+    });
     this.req<HTMLButtonElement>('btn-close-hint').addEventListener('click', () => this.setHintOpen(false));
     this.muteBtn.addEventListener('click', () => this.toggleMute());
     this.req<HTMLButtonElement>('btn-guide').addEventListener('click', () => {
+      this.dismissOnboardingCue();
       if (!this.modalGuide.open) {
         this.modalGuide.showModal();
       }
@@ -324,7 +331,10 @@ export class ObservatoryHud {
     this.padButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
         const pad = btn.dataset.pad as StationId | undefined;
-        if (pad) this.actions.onSelectStation(pad);
+        if (pad) {
+          this.dismissOnboardingCue();
+          this.actions.onSelectStation(pad);
+        }
       });
     });
   }
@@ -375,6 +385,7 @@ export class ObservatoryHud {
     this.cinemaBtn.setAttribute('aria-pressed', String(active));
     this.cinemaExitBtn.hidden = !active;
     if (active) {
+      this.dismissOnboardingCue();
       this.setHintOpen(false);
     }
     this.refreshWalkPrompt();
@@ -452,7 +463,7 @@ export class ObservatoryHud {
   }
 
   public showOnboardingCueOnce(): void {
-    if (!this.onboarding.triggerOnce() || this.cinema.isActive()) return;
+    if (this.cinema.isActive() || this.isAnyModalOpen() || !this.onboarding.triggerOnce()) return;
     this.onboardingCue.classList.remove('is-fading');
     this.onboardingCue.hidden = false;
 
@@ -749,6 +760,9 @@ export class ObservatoryHud {
       (snapshot.phase === 'playing' || snapshot.phase === 'sandbox') &&
       snapshot.cameraMode === 'orbit' &&
       snapshot.activeStation !== 'overview';
+    if (showBar) {
+      this.dismissOnboardingCue();
+    }
     this.stationBar.hidden = !showBar;
     if (!showBar) {
       this.lastRenderedStationKey = '';
