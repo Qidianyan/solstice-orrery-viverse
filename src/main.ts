@@ -90,6 +90,7 @@ function bootstrap(): void {
 
   const handleSceneInteract = (action: SceneInteractAction): void => {
     if (hud.isAnyModalOpen()) return;
+    hud.dismissOnboardingCue();
     dispatchDirect3DAction(controller, action, {
       onTeleportPad: (station) => {
         sound.playTeleportStep();
@@ -194,6 +195,7 @@ function bootstrap(): void {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (hud.isAnyModalOpen()) return;
 
+    hud.dismissOnboardingCue();
     scene.handleKey(e.code, true);
 
     if (e.code === 'KeyV') {

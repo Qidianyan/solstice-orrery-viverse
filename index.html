@@ -4,6 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Solstice Orrery: Keeper of the Brass Sky</title>
+    <meta name="theme-color" content="#0E0C0B" />
+    <meta property="og:title" content="Solstice Orrery: Keeper of the Brass Sky" />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:description"
+      content="Walk an obsidian Doric sanctuary, click forged bronze gears in 3D, split molten sunbeams across seven trials, and ignite the Solstice Apex."
+    />
     <link
       rel="icon"
       type="image/svg+xml"
@@ -19,8 +26,12 @@
     <div id="app" class="app-shell">
       <div id="viewport" class="viewport" aria-label="Solstice Orrery 3D Sanctuary">
         <canvas id="orrery-canvas" class="orrery-canvas"></canvas>
+        <div id="trial-veil" class="trial-veil" aria-hidden="true"></div>
         <div id="hover-pill" class="hover-pill" aria-live="polite" hidden></div>
         <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
+        <div id="onboarding-cue" class="onboarding-cue" role="status" aria-live="polite" hidden>
+          Click 3D bronze gears directly, press V to walk the sanctuary, or C for Cinema view.
+        </div>
         <div id="walk-prompt" class="walk-prompt" role="status" aria-live="polite" hidden>
           <kbd>E</kbd>
           <span id="walk-prompt-text">Rotate Meridian Astrolabe Ring</span>

@@ -25,6 +25,8 @@ const TRIAL_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'] as const;
 const RING_SHORT = ['Outer', 'Mid', 'Inner'] as const;
 
 export const TOAST_AUTO_FADE_MS = 2400;
+export const ONBOARDING_CUE_MS = 3000;
+export const TRIAL_TRANSITION_MS = 600;
 
 /**
  * Pure Cinema minimalist viewing mode state helper (used by UI and Vitest).
@@ -47,11 +49,52 @@ export class CinemaModeController {
   }
 }
 
+/**
+ * Pure 3-second first-frame onboarding micro-cue state controller.
+ * Displays once on initial ritual entry and dismisses immediately on any click/3D interaction or timeout.
+ */
+export class OnboardingCueController {
+  private hasShown = false;
+  private visible = false;
+  private elapsedMs = 0;
+
+  public triggerOnce(): boolean {
+    if (this.hasShown) return false;
+    this.hasShown = true;
+    this.visible = true;
+    this.elapsedMs = 0;
+    return true;
+  }
+
+  public dismiss(): boolean {
+    if (!this.visible) return false;
+    this.visible = false;
+    return true;
+  }
+
+  public tick(deltaMs: number): boolean {
+    if (!this.visible || !Number.isFinite(deltaMs) || deltaMs <= 0) return false;
+    this.elapsedMs += deltaMs;
+    if (this.elapsedMs >= ONBOARDING_CUE_MS) {
+      this.visible = false;
+      return true;
+    }
+    return false;
+  }
+
+  public isVisible(): boolean {
+    return this.visible;
+  }
+}
+
 export class ObservatoryHud {
   private readonly actions: HudActions;
   private readonly cinema = new CinemaModeController();
+  private readonly onboarding = new OnboardingCueController();
 
   private readonly appShell: HTMLElement;
+  private readonly trialVeil: HTMLElement;
+  private readonly onboardingCue: HTMLElement;
   private readonly seedLabel: HTMLElement;
   private readonly timerCard: HTMLElement;
   private readonly timerValue: HTMLElement;
@@ -106,6 +149,9 @@ export class ObservatoryHud {
   private hintOpen = false;
   private toastFadeTimeout: number | null = null;
   private toastHideTimeout: number | null = null;
+  private onboardingFadeTimeout: number | null = null;
+  private onboardingHideTimeout: number | null = null;
+  private trialVeilTimeout: number | null = null;
   private lastPhase: GameSnapshot['phase'] | null = null;
   private lastRenderedStationKey = '';
   private currentSnapshot: GameSnapshot | null = null;
@@ -115,6 +161,8 @@ export class ObservatoryHud {
     this.actions = actions;
 
     this.appShell = this.req<HTMLElement>('app');
+    this.trialVeil = this.req<HTMLElement>('trial-veil');
+    this.onboardingCue = this.req<HTMLElement>('onboarding-cue');
     this.seedLabel = this.req<HTMLElement>('seed-label');
     this.timerCard = this.req<HTMLElement>('timer-card');
     this.timerValue = this.req<HTMLElement>('timer-value');
@@ -228,6 +276,7 @@ export class ObservatoryHud {
 
     this.cinemaBtn.addEventListener('click', () => this.toggleCinemaMode());
     this.cinemaExitBtn.addEventListener('click', () => this.setCinemaMode(false));
+    this.onboardingCue.addEventListener('click', () => this.dismissOnboardingCue());
 
     this.req<HTMLButtonElement>('btn-records').addEventListener('click', () => {
       if (this.currentSnapshot) {
@@ -391,6 +440,52 @@ export class ObservatoryHud {
     this.walkPrompt.hidden = false;
   }
 
+  public triggerTrialTransition(): void {
+    this.trialVeil.classList.remove('is-pulsing');
+    void this.trialVeil.offsetWidth;
+    this.trialVeil.classList.add('is-pulsing');
+    if (this.trialVeilTimeout !== null) window.clearTimeout(this.trialVeilTimeout);
+    this.trialVeilTimeout = window.setTimeout(() => {
+      this.trialVeil.classList.remove('is-pulsing');
+      this.trialVeilTimeout = null;
+    }, TRIAL_TRANSITION_MS + 40);
+  }
+
+  public showOnboardingCueOnce(): void {
+    if (!this.onboarding.triggerOnce() || this.cinema.isActive()) return;
+    this.onboardingCue.classList.remove('is-fading');
+    this.onboardingCue.hidden = false;
+
+    if (this.onboardingFadeTimeout !== null) window.clearTimeout(this.onboardingFadeTimeout);
+    if (this.onboardingHideTimeout !== null) window.clearTimeout(this.onboardingHideTimeout);
+
+    this.onboardingFadeTimeout = window.setTimeout(() => {
+      this.onboardingCue.classList.add('is-fading');
+      this.onboardingFadeTimeout = null;
+    }, Math.max(400, ONBOARDING_CUE_MS - 360));
+
+    this.onboardingHideTimeout = window.setTimeout(() => {
+      this.onboarding.dismiss();
+      this.onboardingCue.hidden = true;
+      this.onboardingCue.classList.remove('is-fading');
+      this.onboardingHideTimeout = null;
+    }, ONBOARDING_CUE_MS);
+  }
+
+  public dismissOnboardingCue(): void {
+    if (!this.onboarding.dismiss()) return;
+    if (this.onboardingFadeTimeout !== null) {
+      window.clearTimeout(this.onboardingFadeTimeout);
+      this.onboardingFadeTimeout = null;
+    }
+    if (this.onboardingHideTimeout !== null) {
+      window.clearTimeout(this.onboardingHideTimeout);
+      this.onboardingHideTimeout = null;
+    }
+    this.onboardingCue.classList.add('is-fading');
+    this.onboardingCue.hidden = true;
+  }
+
   public showToast(message: string): void {
     if (this.cinema.isActive()) return;
     this.toastBanner.textContent = message;
@@ -496,7 +591,11 @@ export class ObservatoryHud {
 
     if (snapshot.lastEvent) {
       switch (snapshot.lastEvent.type) {
+        case 'ritual-started':
+          this.showOnboardingCueOnce();
+          break;
         case 'trial-changed':
+          this.triggerTrialTransition();
           this.showToast(`Trial ${TRIAL_ROMAN[snapshot.lastEvent.trial - 1]}: ${snapshot.trialMeta.title}`);
           break;
         case 'camera-mode-changed':
