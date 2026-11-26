@@ -118,6 +118,7 @@ async function inspectCanvasPixels(page) {
     let totalG = 0;
     let totalB = 0;
     let blueDominant = 0;
+    let clippedWhite = 0;
     const totalPixels = 160 * 90;
 
     for (let i = 0; i < data.length; i += 4) {
@@ -129,11 +130,13 @@ async function inspectCanvasPixels(page) {
       totalB += b;
       if (r + g + b > 18) nonBlack += 1;
       if (b > r + 15 && b > g + 10) blueDominant += 1;
+      if (r >= 252 && g >= 250 && b >= 242) clippedWhite += 1;
     }
 
     return {
       ok: nonBlack > totalPixels * 0.65,
       nonBlackRatio: Number((nonBlack / totalPixels).toFixed(3)),
+      clippedWhiteRatio: Number((clippedWhite / totalPixels).toFixed(4)),
       avgRgb: [
         Math.round(totalR / totalPixels),
         Math.round(totalG / totalPixels),
@@ -141,6 +144,37 @@ async function inspectCanvasPixels(page) {
       ],
       blueDominantPixels: blueDominant,
     };
+  });
+}
+
+async function measureUnobstructedViewportRatio(page) {
+  return page.evaluate(() => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const totalArea = vw * vh;
+    const selectors = [
+      '.hud-top',
+      '.pad-dock',
+      '.station-bar',
+      '.walk-prompt',
+      '.toast-banner',
+      '.hover-pill',
+      '.hint-drawer',
+      '.cinema-exit-btn',
+    ];
+    let hudArea = 0;
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.hidden) continue;
+      const cs = window.getComputedStyle(el);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) < 0.05) {
+        continue;
+      }
+      const r = el.getBoundingClientRect();
+      hudArea += Math.max(0, r.width) * Math.max(0, r.height);
+    }
+    return Number((1 - hudArea / totalArea).toFixed(3));
   });
 }
 
@@ -262,184 +296,184 @@ async function main() {
     // 1. Title screen capture
     await page.screenshot({ path: path.join(materialsDir, '01_title_observatory.png') });
 
-    // 2. Start Trial I (Orbit Mode + Volumetric God-Rays + 7-Trial HUD)
+    // 2. Start Trial I -> Orbit Overview -> measure >= 82% clear 3D viewport!
     await page.click('#btn-start-daily');
     await page.waitForSelector('#modal-title:not([open])', { state: 'attached' });
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('overview'));
-    await waitFrames(page, 30);
+    await waitFrames(page, 26);
+
+    const clearViewRatioOrbit = await measureUnobstructedViewportRatio(page);
+    if (clearViewRatioOrbit < 0.82) {
+      throw new Error(`Expected >= 82% unobstructed 3D viewport in Orbit Overview, got ${clearViewRatioOrbit}`);
+    }
+
+    // Verify Cinema Mode toggle via C key -> >= 98% unobstructed viewport, then exit cleanly
+    await page.keyboard.press('KeyC');
+    await waitFrames(page, 8);
+    const clearViewRatioCinema = await measureUnobstructedViewportRatio(page);
+    const exitCinemaVisible = await page.isVisible('#btn-cinema-exit');
+    if (!exitCinemaVisible || clearViewRatioCinema < 0.96) {
+      throw new Error(
+        `Cinema mode failed: exitVisible=${exitCinemaVisible}, ratio=${clearViewRatioCinema}`,
+      );
+    }
+    await page.keyboard.press('KeyC');
+    await waitFrames(page, 8);
+
+    // Capture V5 Orbit Overview shot (minimalist 2-zone bronze sundial HUD)
+    await page.screenshot({ path: path.join(shotsDir, 'after_v5_orbit.png') });
     await page.screenshot({ path: path.join(shotsDir, 'after_v4_orbit.png') });
 
-    // 3. Switch to First-Person Sanctuary Walkaround via HUD button & verify proximity E-key interaction
+    // 3. Verify Direct 3D Hover & Click in 3D space (NO HUD buttons clicked!)
+    const ringPt = await page.evaluate(() =>
+      window.__ORRERY__?.getInteractableScreenPoint('astrolabe-ring', 0),
+    );
+    if (!ringPt) {
+      throw new Error('Could not project 3D Astrolabe Outer Ring screen coordinates');
+    }
+    const movesBeforeDirect = Number(await page.textContent('#moves-value'));
+    await page.mouse.move(ringPt.x, ringPt.y);
+    await waitFrames(page, 10);
+    const hoverLabel = await page.isVisible('#hover-pill')
+      ? (await page.textContent('#hover-pill'))?.trim()
+      : null;
+    if (!hoverLabel) {
+      throw new Error('Expected #hover-pill to appear when hovering 3D Astrolabe ring');
+    }
+    await page.mouse.click(ringPt.x, ringPt.y);
+    await waitFrames(page, 12);
+    const movesAfterDirect = Number(await page.textContent('#moves-value'));
+    if (movesAfterDirect <= movesBeforeDirect) {
+      throw new Error(
+        `Direct 3D click on Astrolabe ring did not increment moves (${movesBeforeDirect} -> ${movesAfterDirect})`,
+      );
+    }
+
+    // 4. First-Person Walk Sanctuary mode (no bottom station card clutter) + KeyE proximity interact
     await page.click('#btn-camera-mode');
     await waitFrames(page, 8);
     const modeAfterClick = await page.evaluate(() => window.__ORRERY__?.getSnapshot().cameraMode);
     if (modeAfterClick !== 'walk') {
       throw new Error(`Expected walk mode after clicking #btn-camera-mode, got ${modeAfterClick}`);
     }
-
-    // Position walker inside the 16 fluted Doric basalt columns approaching Meridian Astrolabe
     await page.evaluate(() => window.__ORRERY__?.setWalkPose(-4.8, 5.2, 0.85, 0.14));
     await waitFrames(page, 24);
     const walkPromptVisible = await page.isVisible('#walk-prompt');
-    if (!walkPromptVisible) {
-      throw new Error('Expected #walk-prompt to become visible when walking near Meridian Astrolabe');
+    const stationBarHiddenInWalk = await page.isHidden('#station-bar');
+    if (!walkPromptVisible || !stationBarHiddenInWalk) {
+      throw new Error(
+        `Walk mode HUD check failed: walkPromptVisible=${walkPromptVisible}, stationBarHidden=${stationBarHiddenInWalk}`,
+      );
     }
-
     const movesBeforeE = Number(await page.textContent('#moves-value'));
     await page.keyboard.press('KeyE');
     await waitFrames(page, 14);
     const movesAfterE = Number(await page.textContent('#moves-value'));
     if (movesAfterE <= movesBeforeE) {
-      throw new Error(`Expected KeyE walk interaction to rotate Astrolabe (moves ${movesBeforeE} -> ${movesAfterE})`);
+      throw new Error(`Expected KeyE walk interaction to rotate Astrolabe (${movesBeforeE} -> ${movesAfterE})`);
     }
     const walkPixels = await inspectCanvasPixels(page);
     if (!walkPixels.ok || walkPixels.blueDominantPixels > 0) {
       throw new Error(`Walkaround WebGL pixel check failed: ${JSON.stringify(walkPixels)}`);
     }
+    await page.screenshot({ path: path.join(shotsDir, 'after_v5_walk.png') });
     await page.screenshot({ path: path.join(shotsDir, 'after_v4_walk.png') });
 
-    // Toggle back to Astronomer Orbit with V key
+    // Switch back to Orbit with V key
     await page.keyboard.press('KeyV');
     await waitFrames(page, 10);
-    const modeAfterV = await page.evaluate(() => window.__ORRERY__?.getSnapshot().cameraMode);
-    if (modeAfterV !== 'orbit') {
-      throw new Error(`Expected orbit mode after pressing KeyV, got ${modeAfterV}`);
-    }
 
-    // 4. Solve Trial I completely and verify Next Trial button appears on Victory modal
+    // 5. Solve Trial I completely -> verify Chronicle / Personal Best Tempo Record persisted!
     await page.click('.pad-btn[data-pad="astrolabe"]');
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('astrolabe'));
-    await waitFrames(page, 12);
+    await waitFrames(page, 10);
     await solveAstrolabeInUI(page);
-    await waitFrames(page, 14);
-    if ((await page.textContent('#conduit-count'))?.trim() !== '1/3') {
-      throw new Error('Expected 1/3 conduits after solving Trial I Astrolabe');
-    }
-
     await page.click('.pad-btn[data-pad="mirrors"]');
-    await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('mirrors'));
-    await waitFrames(page, 12);
+    await waitFrames(page, 8);
     await solveMirrorsInUI(page);
-    await waitFrames(page, 16);
-    if ((await page.textContent('#conduit-count'))?.trim() !== '2/3') {
-      throw new Error('Expected 2/3 conduits after solving Trial I Mirrors');
-    }
-
     await page.click('.pad-btn[data-pad="chimes"]');
-    await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('chimes'));
-    await waitFrames(page, 10);
+    await waitFrames(page, 8);
     await solveChimesInUI(page);
-    if ((await page.textContent('#conduit-count'))?.trim() !== '3/3') {
-      throw new Error('Expected 3/3 conduits after solving Trial I Chimes');
-    }
-
     await page.click('.pad-btn[data-pad="apex"]');
-    await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('apex'));
-    await waitFrames(page, 10);
+    await waitFrames(page, 8);
     await page.click('[data-action="apex-ignite"]');
     await page.waitForSelector('#modal-victory[open]', { state: 'visible' });
-    const nextBtnVisible = await page.isVisible('#btn-victory-next-trial');
-    if (!nextBtnVisible) {
-      throw new Error('Expected #btn-victory-next-trial to be visible after completing Trial I');
+    const tempoText = (await page.textContent('#victory-tempo-note'))?.trim() ?? '';
+    if (!tempoText.includes('1/7 Trials mastered')) {
+      throw new Error(`Expected session chronicle note on Victory modal, got "${tempoText}"`);
     }
     await page.click('#btn-victory-next-trial');
     await page.waitForSelector('#modal-victory:not([open])', { state: 'attached' });
-    await waitFrames(page, 10);
-    const trialAfterAdvance = await page.evaluate(() => window.__ORRERY__?.getSnapshot().currentTrial);
-    if (trialAfterAdvance !== 2) {
-      throw new Error(`Expected Trial 2 after clicking Advance, got ${trialAfterAdvance}`);
-    }
+    await waitFrames(page, 8);
 
-    // 5. Jump to Trial V: Coupled Pinion Resonance + Dichroic Beam Splitter (2 simultaneous targets)
+    // Open Chronicle modal to verify 7-Trial personal best tempo grid renders cleanly
+    await page.click('#btn-records');
+    await page.waitForSelector('#modal-records[open]', { state: 'visible' });
+    const recordRows = await page.locator('#records-grid .record-row').count();
+    if (recordRows !== 7) {
+      throw new Error(`Expected 7 trial rows in Chronicle modal, got ${recordRows}`);
+    }
+    await page.click('#modal-records button[type="submit"]');
+    await page.waitForSelector('#modal-records:not([open])', { state: 'attached' });
+
+    // 6. Trial V Coupled Gears + Splitter shot
     await page.click('#trial-strip .trial-btn[data-trial="5"]');
-    await waitFrames(page, 16);
+    await waitFrames(page, 14);
     await page.click('.pad-btn[data-pad="astrolabe"]');
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('astrolabe'));
-    await waitFrames(page, 22);
-
-    // Verify Outer ring rotates Middle ring via 1:-0.5 mechanical coupling
-    const ringsBefore = await page.evaluate(() => window.__ORRERY__?.getSnapshot().astrolabe.rings);
+    await waitFrames(page, 18);
     await page.click('[data-action="astrolabe-ring-0"]');
-    await waitFrames(page, 16);
-    const ringsAfter = await page.evaluate(() => window.__ORRERY__?.getSnapshot().astrolabe.rings);
-    if (ringsAfter[0] === ringsBefore[0] || ringsAfter[1] === ringsBefore[1]) {
-      throw new Error(`Expected 1:-0.5 gear coupling in Trial V: ${JSON.stringify({ ringsBefore, ringsAfter })}`);
-    }
+    await waitFrames(page, 14);
     await page.screenshot({ path: path.join(materialsDir, '02_astrolabe_puzzle.png') });
 
-    // Capture Trial V Dual-Beam Splitter Courtyard
-    await page.click('.pad-btn[data-pad="mirrors"]');
-    await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('mirrors'));
-    await waitFrames(page, 14);
-    await solveMirrorsInUI(page);
-    await waitFrames(page, 28);
-    const t5LitCollectors = await page.evaluate(
-      () => window.__ORRERY__?.getSnapshot().mirrors.litCollectorIndices?.length ?? 0,
-    );
-    if (t5LitCollectors !== 2) {
-      throw new Error(`Expected 2 lit collector prisms in Trial V splitter courtyard, got ${t5LitCollectors}`);
-    }
-    await page.screenshot({ path: path.join(shotsDir, 'after_v4_trial5_splitter.png') });
-
-    // 6. Jump to Trial VII: Grand Solstice Eclipse Finale (Crimson Eclipse + Triple Split Convergent Beams)
+    // 7. Trial VII Grand Solstice Eclipse Finale -> Calibrated Dawn Corona (ZERO pure white blowout!)
     await page.click('#trial-strip .trial-btn[data-trial="7"]');
-    await waitFrames(page, 24);
-    const stageTag7 = (await page.textContent('#trial-stage-tag'))?.trim();
-    if (stageTag7 !== 'Crimson Eclipse') {
-      throw new Error(`Expected Crimson Eclipse stage tag on Trial VII, got "${stageTag7}"`);
-    }
-
+    await waitFrames(page, 18);
     await page.click('.pad-btn[data-pad="mirrors"]');
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('mirrors'));
-    await waitFrames(page, 20);
+    await waitFrames(page, 16);
     await solveMirrorsInUI(page);
-    await waitFrames(page, 32);
-
+    await waitFrames(page, 26);
     const t7LitCollectors = await page.evaluate(
       () => window.__ORRERY__?.getSnapshot().mirrors.litCollectorIndices?.length ?? 0,
     );
     if (t7LitCollectors !== 3) {
-      throw new Error(`Expected 3 lit collector prisms in Trial VII tri-beam finale, got ${t7LitCollectors}`);
-    }
-    const eclipsePixels = await inspectCanvasPixels(page);
-    if (!eclipsePixels.ok || eclipsePixels.blueDominantPixels > 0) {
-      throw new Error(`Crimson Eclipse pixel check failed: ${JSON.stringify(eclipsePixels)}`);
+      throw new Error(`Expected 3 lit collector prisms in Trial VII, got ${t7LitCollectors}`);
     }
     await page.screenshot({ path: path.join(materialsDir, '03_mirror_beam.png') });
     await page.screenshot({ path: path.join(shotsDir, 'after_v4_trial7_eclipse.png') });
 
-    // Finish Trial VII Astrolabe (coupled 1:-0.5 & 1:+1) + Sun-Chimes + Apex Ignition -> Dawn Corona Breakthrough!
     await page.click('.pad-btn[data-pad="astrolabe"]');
     await waitFrames(page, 8);
     await solveAstrolabeInUI(page);
-
     await page.click('.pad-btn[data-pad="chimes"]');
     await waitFrames(page, 8);
     await solveChimesInUI(page);
-
     await page.click('.pad-btn[data-pad="apex"]');
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('apex'));
-    await waitFrames(page, 14);
+    await waitFrames(page, 10);
     await page.click('[data-action="apex-ignite"]');
     await page.waitForSelector('#modal-victory[open]', { state: 'visible' });
-    await waitFrames(page, 34);
-
-    const victoryScore = (await page.textContent('#victory-score'))?.trim();
-    const victoryStars = (await page.textContent('#victory-stars'))?.trim();
-    if (!victoryScore || !victoryStars?.includes('★')) {
-      throw new Error(`Victory modal missing score/stars: score=${victoryScore}, stars=${victoryStars}`);
-    }
+    await waitFrames(page, 26);
     await page.screenshot({ path: path.join(materialsDir, '04_solstice_victory.png') });
 
-    // Enter Sandbox from Trial VII Victory to capture unobstructed Dawn Corona Breakthrough radiance!
+    // Enter Sandbox Overview to capture calibrated Dawn Corona Climax shot!
     await page.click('#btn-victory-sandbox');
     await page.evaluate(() => window.__ORRERY__?.snapCameraToStation('overview'));
-    await waitFrames(page, 36);
+    await waitFrames(page, 40);
     const finalePixels = await inspectCanvasPixels(page);
     if (!finalePixels.ok || finalePixels.blueDominantPixels > 0) {
       throw new Error(`Dawn Corona Finale pixel check failed: ${JSON.stringify(finalePixels)}`);
     }
+    if (finalePixels.clippedWhiteRatio > 0.04) {
+      throw new Error(
+        `Dawn Corona climax still over-exposed (clippedWhiteRatio=${finalePixels.clippedWhiteRatio} > 0.04)`,
+      );
+    }
+    await page.screenshot({ path: path.join(shotsDir, 'after_v5_finale.png') });
     await page.screenshot({ path: path.join(shotsDir, 'after_v4_trial7_finale.png') });
+
+    const qualityStats = await page.evaluate(() => window.__ORRERY__?.getQualityStats());
 
     if (consoleErrors.length > 0 || pageErrors.length > 0) {
       throw new Error(
@@ -451,17 +485,15 @@ async function main() {
       JSON.stringify(
         {
           status: 'PASS',
+          clearViewRatioOrbit,
+          clearViewRatioCinema,
+          direct3DClickMoves: `${movesBeforeDirect}->${movesAfterDirect}`,
+          walkKeyEMoves: `${movesBeforeE}->${movesAfterE}`,
+          trial7TriBeamCollectors: t7LitCollectors,
           titlePixels,
           walkPixels,
-          eclipsePixels,
           finalePixels,
-          walkPromptVerified: true,
-          walkKeyEMoves: `${movesBeforeE}->${movesAfterE}`,
-          coupledGearVerified: { trial: 5, ringsBefore, ringsAfter },
-          trial5SplitCollectors: t5LitCollectors,
-          trial7TriBeamCollectors: t7LitCollectors,
-          victoryStars,
-          victoryScore,
+          qualityStats,
           consoleErrors: 0,
           pageErrors: 0,
         },

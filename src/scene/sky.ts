@@ -77,7 +77,7 @@ void main() {
   vec3 z0 = vec3(0.24, 0.13, 0.045); vec3 h0 = vec3(0.66, 0.42, 0.15);
   vec3 z1 = vec3(0.15, 0.07, 0.032); vec3 h1 = vec3(0.58, 0.28, 0.095);
   vec3 z2 = vec3(0.055, 0.014, 0.012); vec3 h2 = vec3(0.46, 0.10, 0.042);
-  vec3 z3 = vec3(0.28, 0.15, 0.048); vec3 h3 = vec3(0.74, 0.46, 0.16);
+  vec3 z3 = vec3(0.23, 0.12, 0.038); vec3 h3 = vec3(0.64, 0.39, 0.13);
 
   vec3 zenithCol;
   vec3 horizCol;
@@ -132,16 +132,16 @@ void main() {
 
   float coronaRing = exp(-abs(sunAngle - 0.115) * 34.0) * (0.42 + crimsonPhase * 0.68 + 0.14 * sin(rayAngle * 10.0 + uTime * 1.6));
   float rays = pow(0.5 + 0.5 * cos(rayAngle * 14.0 + uTime * 0.26), 5.0)
-    * exp(-sunAngle * 4.8) * (0.14 + p * 0.34 + crimsonPhase * 0.28 + uBloom * 0.48);
-  float wideGlow = exp(-sunAngle * 3.6) * (0.12 + p * 0.22 + uBloom * 0.28);
-  float coreReignite = (1.0 - smoothstep(0.0, 0.105, sunAngle)) * (max(0.0, 1.0 - st * 0.55) * 0.48 + uBloom * 0.85);
+    * exp(-sunAngle * 5.2) * (0.12 + p * 0.24 + crimsonPhase * 0.26 + uBloom * 0.34);
+  float wideGlow = exp(-sunAngle * 4.2) * (0.1 + p * 0.16 + uBloom * 0.18);
+  float coreReignite = (1.0 - smoothstep(0.0, 0.095, sunAngle)) * (max(0.0, 1.0 - st * 0.55) * 0.42 + uBloom * 0.56);
 
   // Dark obsidian moon disc during Crimson Eclipse stage (parts on Dawn Corona bloom!)
   float eclipseDisc = (1.0 - smoothstep(0.082, 0.105, sunAngle)) * crimsonPhase * (1.0 - uBloom);
 
-  sky += coronaColor * (coronaRing + rays * 0.62 + wideGlow * 0.36);
+  sky += coronaColor * (coronaRing + rays * 0.56 + wideGlow * 0.32);
   sky = mix(sky, vec3(0.035, 0.012, 0.010), eclipseDisc * 0.94);
-  sky += vec3(1.12, 0.88, 0.48) * coreReignite;
+  sky += vec3(1.0, 0.84, 0.44) * coreReignite;
 
   gl_FragColor = vec4(sky, 1.0);
 }

@@ -144,6 +144,16 @@ export interface BestRecord {
   moves: number;
 }
 
+export interface TrialRecord {
+  trial: TrialNumber;
+  stars: 1 | 2 | 3;
+  score: number;
+  moves: number;
+  elapsedSec: number;
+  timeRemainingSec: number;
+  seed: string;
+}
+
 export interface GameSnapshot {
   phase: GamePhase;
   seed: string;
@@ -153,6 +163,7 @@ export interface GameSnapshot {
   currentTrial: TrialNumber;
   trialMeta: TrialMetadata;
   completedTrials: TrialNumber[];
+  trialRecords: Partial<Record<TrialNumber, TrialRecord>>;
   timeRemainingSec: number;
   durationSec: number;
   moves: number;

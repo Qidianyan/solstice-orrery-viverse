@@ -1,7 +1,9 @@
 import { GameController } from './game/controller';
 import type { CameraMode, GameSnapshot, StationId, TrialNumber } from './game/types';
 import { getAscendingChimeSlots } from './game/puzzles';
+import { dispatchDirect3DAction } from './game/directInteraction';
 import type { CameraPreset } from './scene/cameraRig';
+import type { AdaptiveQualityState } from './scene/adaptiveQuality';
 import { SoundEngine } from './audio/soundEngine';
 import { ObservatoryScene, type SceneInteractAction } from './scene/observatoryScene';
 import { ObservatoryHud } from './ui/hud';
@@ -14,6 +16,12 @@ declare global {
       setCameraMode: (mode: CameraMode, immediate?: boolean) => void;
       setWalkPose: (x: number, z: number, yaw: number, pitch?: number) => void;
       setTrial: (trial: TrialNumber) => void;
+      setCinemaMode: (enabled: boolean) => boolean;
+      getInteractableScreenPoint: (
+        kind: SceneInteractAction['kind'],
+        index?: number,
+      ) => { x: number; y: number } | null;
+      getQualityStats: () => AdaptiveQualityState;
       setCinematicPose: (pose: CameraPreset, immediate?: boolean) => void;
       setManualStep: (enabled: boolean) => void;
       stepFrame: (deltaSec: number) => void;
@@ -83,34 +91,12 @@ function bootstrap(): void {
 
   const handleSceneInteract = (action: SceneInteractAction): void => {
     if (hud.isAnyModalOpen()) return;
-    const isWalk = controller.getSnapshot().cameraMode === 'walk';
-    switch (action.kind) {
-      case 'pad':
+    dispatchDirect3DAction(controller, action, {
+      onTeleportPad: (station) => {
         sound.playTeleportStep();
-        controller.setStation(action.station);
-        scene.teleportToStation(action.station);
-        break;
-      case 'astrolabe-ring':
-        if (!isWalk) controller.setStation('astrolabe');
-        controller.rotateAstrolabe(action.ringIndex, 1);
-        break;
-      case 'mirror':
-        if (!isWalk) controller.setStation('mirrors');
-        controller.rotateMirror(action.mirrorIndex, 1);
-        break;
-      case 'chime':
-        if (!isWalk) controller.setStation('chimes');
-        controller.strikeChime(action.slotIndex);
-        break;
-      case 'chime-gong':
-        if (!isWalk) controller.setStation('chimes');
-        controller.requestChimePulse();
-        break;
-      case 'apex-crown':
-        if (!isWalk) controller.setStation('apex');
-        controller.triggerApexCrown();
-        break;
-    }
+        scene.teleportToStation(station);
+      },
+    });
   };
 
   const triggerProximityInteract = (): void => {
@@ -167,23 +153,27 @@ function bootstrap(): void {
     const evt = snapshot.lastEvent;
     if (!evt) return;
     switch (evt.type) {
+      case 'ritual-started':
+      case 'trial-changed':
+        sound.syncHarmonicLayer(snapshot.solvedCount, snapshot.apexIgnited);
+        break;
       case 'astrolabe-rotated':
-        sound.playAstrolabeClick(evt.aligned);
-        if (evt.solved) sound.playConduitIgnite();
+        sound.playAstrolabeClick(evt.aligned, evt.coupledRings.length);
+        if (evt.solved) sound.playConduitIgnite(snapshot.solvedCount);
         break;
       case 'mirror-rotated':
         sound.playMirrorTurn(evt.beamHitsCollector);
-        if (evt.solved) sound.playConduitIgnite();
+        if (evt.solved) sound.playConduitIgnite(snapshot.solvedCount);
         break;
       case 'chime-struck':
         sound.playChimeBell(evt.rank, evt.correct);
-        if (evt.solved) sound.playConduitIgnite();
+        if (evt.solved) sound.playConduitIgnite(snapshot.solvedCount);
         break;
       case 'apex-locked':
         sound.playApexLocked();
         break;
       case 'apex-ignited':
-        sound.playSolsticeVictory();
+        sound.playSolsticeVictory(snapshot.currentTrial);
         break;
       case 'eclipse-expired':
         sound.playEclipseExpired();
@@ -210,6 +200,8 @@ function bootstrap(): void {
     if (e.code === 'KeyV') {
       sound.playTeleportStep();
       controller.toggleCameraMode();
+    } else if (e.code === 'KeyC') {
+      hud.toggleCinemaMode();
     } else if (e.code === 'KeyE') {
       triggerProximityInteract();
     } else if (e.code === 'KeyR') {
@@ -260,6 +252,10 @@ function bootstrap(): void {
     setTrial: (trial: TrialNumber) => {
       controller.startTrial(trial);
     },
+    setCinemaMode: (enabled: boolean) => hud.setCinemaMode(enabled),
+    getInteractableScreenPoint: (kind: SceneInteractAction['kind'], index: number = 0) =>
+      scene.getInteractableScreenPoint(kind, index),
+    getQualityStats: () => scene.getQualityStats(),
     setCinematicPose: (pose: CameraPreset, immediate: boolean = false) => {
       scene.setCinematicPose(pose, immediate);
     },

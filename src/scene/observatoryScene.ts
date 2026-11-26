@@ -8,7 +8,15 @@ import { PALETTE } from './palette';
 import { createSanctuaryTextures, type SanctuaryTextureSet } from './textures';
 import { createSolsticeSky, type SolsticeSkySystem } from './sky';
 import { createObservatoryEnvironment, type ObservatoryEnvironment } from './environment';
-import { createObservatoryInstruments, type ObservatoryInstruments } from './instruments';
+import {
+  createObservatoryInstruments,
+  type HoveredInstrumentTarget,
+  type ObservatoryInstruments,
+} from './instruments';
+import {
+  AdaptiveQualityController,
+  type AdaptiveQualityState,
+} from './adaptiveQuality';
 import {
   ComfortCameraRig,
   findNearbyInteractStation,
@@ -94,6 +102,7 @@ export class ObservatoryScene {
   private readonly sky: SolsticeSkySystem;
   private readonly env: ObservatoryEnvironment;
   private readonly instruments: ObservatoryInstruments;
+  private readonly quality: AdaptiveQualityController;
   private readonly callbacks: ObservatorySceneCallbacks;
 
   private readonly sunLight: THREE.DirectionalLight;
@@ -157,11 +166,15 @@ export class ObservatoryScene {
       powerPreference: 'high-performance',
       preserveDrawingBuffer: true,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.quality = new AdaptiveQualityController({
+      nativeDpr: typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+    });
+    const initialDpr = this.quality.getState().dpr;
+    this.renderer.setPixelRatio(initialDpr);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 1.04;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.scene = new THREE.Scene();
@@ -180,15 +193,15 @@ export class ObservatoryScene {
     this.cameraRig = new ComfortCameraRig(this.camera);
 
     this.composer = new EffectComposer(this.renderer);
-    this.composer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    this.composer.setPixelRatio(initialDpr);
     this.composer.setSize(width, height);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
-      0.42,
-      0.38,
-      0.88,
+      0.28,
+      0.32,
+      0.94,
     );
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
@@ -316,19 +329,32 @@ export class ObservatoryScene {
     }
   }
 
+  private clearHoverState(): void {
+    this.hoverHalo.visible = false;
+    this.instruments.setHoveredTarget(null);
+    if (this.lastHoveredLabel !== null) {
+      this.lastHoveredLabel = null;
+      this.callbacks.onHoverChange(null);
+    }
+  }
+
   public snapToStation(station: StationId): void {
+    this.clearHoverState();
     this.cameraRig.moveToStation(station, true, true);
   }
 
   public teleportToStation(station: StationId): void {
+    this.clearHoverState();
     this.cameraRig.moveToStation(station, false, true);
   }
 
   public setCameraMode(mode: CameraMode, immediate: boolean = false): void {
+    this.clearHoverState();
     this.cameraRig.setMode(mode, immediate);
   }
 
   public setWalkPose(x: number, z: number, yaw: number, pitch: number = 0.08): void {
+    this.clearHoverState();
     this.cameraRig.setWalkPose(x, z, yaw, pitch);
     const near = findNearbyInteractStation(this.cameraRig.getWalkPosition());
     const nextStation = near ? near.station : null;
@@ -344,6 +370,39 @@ export class ObservatoryScene {
 
   public setCinematicPose(pose: CameraPreset, immediate: boolean = false): void {
     this.cameraRig.setCinematicPose(pose, immediate);
+  }
+
+  public getQualityStats(): AdaptiveQualityState {
+    return this.quality.getState();
+  }
+
+  public getInteractableScreenPoint(
+    kind: SceneInteractAction['kind'],
+    index: number = 0,
+  ): { x: number; y: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const all = [...this.instruments.interactables, ...this.env.interactables];
+    for (const obj of all) {
+      const data = obj.userData.interactable as SceneInteractAction | undefined;
+      if (!data || data.kind !== kind) continue;
+      if (kind === 'astrolabe-ring' && data.kind === 'astrolabe-ring') {
+        if (data.ringIndex !== index) continue;
+        // Skip hollow torus center; project a solid crest/aperture/tooth mesh on the ring rim
+        if (obj instanceof THREE.Mesh && obj.geometry instanceof THREE.TorusGeometry) continue;
+      }
+      if (kind === 'mirror' && data.kind === 'mirror' && data.mirrorIndex !== index) continue;
+      if (kind === 'chime' && data.kind === 'chime' && data.slotIndex !== index) continue;
+      const worldPos = new THREE.Vector3();
+      obj.getWorldPosition(worldPos);
+      const projected = worldPos.project(this.camera);
+      if (projected.z < -1 || projected.z > 1) continue;
+      return {
+        x: rect.left + ((projected.x + 1) * 0.5) * rect.width,
+        y: rect.top + ((-projected.y + 1) * 0.5) * rect.height,
+      };
+    }
+    return null;
   }
 
   public setManualStep(enabled: boolean): void {
@@ -372,11 +431,16 @@ export class ObservatoryScene {
 
   private bindEvents(): void {
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
+    this.canvas.addEventListener('pointerleave', this.onPointerLeave);
     window.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('resize', this.onResize);
   }
+
+  private onPointerLeave = (): void => {
+    this.clearHoverState();
+  };
 
   private raycastInteractable(
     clientX: number,
@@ -415,6 +479,7 @@ export class ObservatoryScene {
         this.cameraRig.orbitBy(e.movementX, e.movementY);
         this.canvas.style.cursor = 'grabbing';
         this.hoverHalo.visible = false;
+        this.instruments.setHoveredTarget(null);
         return;
       }
     }
@@ -430,10 +495,26 @@ export class ObservatoryScene {
         this.hoverHalo.visible = true;
         this.hoverHalo.position.copy(hit.point);
         this.hoverHalo.lookAt(this.camera.position);
+        const hoveredTarget: HoveredInstrumentTarget =
+          hit.action.kind === 'astrolabe-ring'
+            ? { kind: 'astrolabe-ring', ringIndex: hit.action.ringIndex }
+            : hit.action.kind === 'mirror'
+              ? { kind: 'mirror', mirrorIndex: hit.action.mirrorIndex }
+              : hit.action.kind === 'chime'
+                ? { kind: 'chime', slotIndex: hit.action.slotIndex }
+                : hit.action.kind === 'chime-gong'
+                  ? { kind: 'chime-gong' }
+                  : hit.action.kind === 'apex-crown'
+                    ? { kind: 'apex-crown' }
+                    : null;
+        this.instruments.setHoveredTarget(hoveredTarget);
       } else {
         this.hoverHalo.visible = false;
+        this.instruments.setHoveredTarget(null);
       }
       this.canvas.style.cursor = hit ? 'pointer' : 'grab';
+    } else {
+      this.clearHoverState();
     }
   };
 
@@ -553,9 +634,9 @@ export class ObservatoryScene {
       this.skyStageVisual,
     );
     const crimsonDip = this.skyStageVisual > 1.2 && this.skyStageVisual < 2.5 ? 0.35 : 0;
-    this.sunLight.intensity = 2.25 - crimsonDip + this.progressVisual * 0.65 + bloom * 0.55 - urgency * 0.4;
-    this.hemiLight.intensity = 0.78 - crimsonDip * 0.35 + this.progressVisual * 0.32 - urgency * 0.16;
-    this.rimLight.intensity = 0.88 + crimsonDip * 0.65 + this.progressVisual * 0.25 + bloom * 0.3;
+    this.sunLight.intensity = 2.15 - crimsonDip + this.progressVisual * 0.45 + bloom * 0.25 - urgency * 0.35;
+    this.hemiLight.intensity = 0.72 - crimsonDip * 0.3 + this.progressVisual * 0.22 - urgency * 0.14;
+    this.rimLight.intensity = 0.82 + crimsonDip * 0.55 + this.progressVisual * 0.2 + bloom * 0.2;
 
     this.lerpFourStageColor(
       this.fog.color,
@@ -565,9 +646,9 @@ export class ObservatoryScene {
       this.fogDawn,
       this.skyStageVisual,
     );
-    this.fog.density = THREE.MathUtils.lerp(0.0056, 0.0036, this.progressVisual);
+    this.fog.density = THREE.MathUtils.lerp(0.0052, 0.0032, this.progressVisual);
 
-    // Volumetric God-Ray Cones animation & color sync
+    // Volumetric God-Ray Cones animation & color sync (ducked cleanly during Apex Dawn Corona so central bronze rings stay razor sharp)
     this.godRayUniforms.uTime.value = this.elapsedSec;
     this.lerpFourStageColor(
       this.godRayUniforms.uColor.value,
@@ -577,10 +658,22 @@ export class ObservatoryScene {
       this.rayDawn,
       this.skyStageVisual,
     );
-    this.godRayUniforms.uOpacity.value = 0.14 + this.progressVisual * 0.06 + bloom * 0.07;
+    this.godRayUniforms.uOpacity.value = Math.max(0.08, 0.14 + this.progressVisual * 0.05 - bloom * 0.05);
 
-    this.bloomPass.strength = 0.34 + this.progressVisual * 0.06 + bloom * 0.09;
-    this.bloomPass.threshold = THREE.MathUtils.lerp(0.92, 0.88, bloom);
+    // Photographic ACES exposure compression + disciplined Bloom during Dawn Corona climax (ZERO white blowout!)
+    this.renderer.toneMappingExposure = THREE.MathUtils.lerp(1.04, 0.88, bloom);
+    this.bloomPass.strength = THREE.MathUtils.lerp(0.28 + this.progressVisual * 0.04, 0.26, bloom);
+    this.bloomPass.threshold = THREE.MathUtils.lerp(0.94, 0.98, bloom);
+
+    // 60fps Adaptive DPR & dust particle scaler
+    if (!this.manualStepMode) {
+      const q = this.quality.recordFrame(deltaSec);
+      if (q.changed) {
+        this.renderer.setPixelRatio(q.state.dpr);
+        this.composer.setPixelRatio(q.state.dpr);
+        this.env.setParticleRatio(q.state.particleScale);
+      }
+    }
 
     if (this.hoverHalo.visible) {
       const pulse = 1 + Math.sin(this.elapsedSec * 4.5) * 0.1;
@@ -640,6 +733,7 @@ export class ObservatoryScene {
     this.disposed = true;
     window.cancelAnimationFrame(this.rafId);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerup', this.onPointerUp);
     this.canvas.removeEventListener('wheel', this.onWheel);

@@ -14,6 +14,7 @@ export interface ObservatoryEnvironment {
   group: THREE.Group;
   interactables: THREE.Object3D[];
   steppingPads: SteppingPadVisual[];
+  setParticleRatio: (ratio01: number) => void;
   update: (
     elapsedSec: number,
     deltaSec: number,
@@ -203,9 +204,9 @@ export function createObservatoryEnvironment(
 
   const quartzInlayMat = trackMat(
     new THREE.MeshStandardMaterial({
-      color: PALETTE.quartzWhite,
-      roughness: 0.38,
-      metalness: 0.12,
+      color: 0xd4b98c,
+      roughness: 0.44,
+      metalness: 0.24,
     }),
   );
 
@@ -657,6 +658,7 @@ export function createObservatoryEnvironment(
   );
   const dustPoints = new THREE.Points(dustGeo, dustMat);
   group.add(dustPoints);
+  let activeDustCount = dustCount;
 
   const unlitEmissive = new THREE.Color(PALETTE.solarEmber);
   const litEmissive = new THREE.Color(PALETTE.moltenGold);
@@ -666,6 +668,11 @@ export function createObservatoryEnvironment(
     group,
     interactables,
     steppingPads,
+    setParticleRatio: (ratio01: number) => {
+      const clamped = Math.max(0.25, Math.min(1.0, ratio01));
+      activeDustCount = Math.max(64, Math.round(dustCount * clamped));
+      dustGeo.setDrawRange(0, activeDustCount);
+    },
     update: (elapsedSec, deltaSec, activeStation, conduitStates, apexBloom01) => {
       for (const f of lanternFlames) {
         const sway = Math.sin(elapsedSec * 2.4 + f.phase);
@@ -682,7 +689,7 @@ export function createObservatoryEnvironment(
         c.coreMat.emissive.copy(scratchCol);
         c.coreMat.emissiveIntensity = THREE.MathUtils.lerp(
           0.25,
-          3.1 + Math.sin(elapsedSec * 2.2) * 0.35,
+          2.6 + Math.sin(elapsedSec * 2.2) * 0.25,
           c.glowFactor,
         );
 
@@ -700,21 +707,21 @@ export function createObservatoryEnvironment(
       for (const pad of steppingPads) {
         const isCurrent = pad.station === activeStation;
         const pulse = 0.5 + 0.5 * Math.sin(elapsedSec * 2.0);
-        pad.ringMat.emissiveIntensity = isCurrent ? 2.2 + pulse * 0.4 : 0.78 + pulse * 0.25;
+        pad.ringMat.emissiveIntensity = isCurrent ? 1.8 + pulse * 0.3 : 0.72 + pulse * 0.2;
         const scale = isCurrent ? 1.05 : 1.0;
         pad.ringMesh.scale.set(scale, 1, scale);
       }
 
       const posAttr = dustGeo.getAttribute('position') as THREE.BufferAttribute;
       const arr = posAttr.array as Float32Array;
-      const riseSpeed = 0.28 + apexBloom01 * 1.65;
-      const swirlSpeed = 0.055 + apexBloom01 * 0.36;
-      for (let i = 0; i < dustCount; i += 1) {
+      const riseSpeed = 0.28 + apexBloom01 * 1.45;
+      const swirlSpeed = 0.055 + apexBloom01 * 0.32;
+      for (let i = 0; i < activeDustCount; i += 1) {
         const baseAngle = dustSeeds[i * 3];
         const baseRadius = dustSeeds[i * 3 + 1];
         const speedMul = dustSeeds[i * 3 + 2];
         const angle = baseAngle + elapsedSec * swirlSpeed * speedMul;
-        const pullIn = 1 - apexBloom01 * 0.24;
+        const pullIn = 1 - apexBloom01 * 0.2;
         arr[i * 3] = Math.cos(angle) * baseRadius * pullIn;
         arr[i * 3 + 2] = Math.sin(angle) * baseRadius * pullIn;
         let y = arr[i * 3 + 1] + deltaSec * riseSpeed * speedMul;
@@ -722,8 +729,8 @@ export function createObservatoryEnvironment(
         arr[i * 3 + 1] = y;
       }
       posAttr.needsUpdate = true;
-      dustMat.opacity = 0.72 + apexBloom01 * 0.26;
-      dustMat.size = 0.4 + apexBloom01 * 0.25;
+      dustMat.opacity = 0.68 + apexBloom01 * 0.16;
+      dustMat.size = 0.38 + apexBloom01 * 0.18;
     },
     dispose: () => {
       for (const g of geometries) g.dispose();

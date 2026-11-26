@@ -10,6 +10,7 @@ import type {
   ScoreBreakdown,
   StationId,
   TrialNumber,
+  TrialRecord,
 } from './types';
 import { generateRandomSeed, getDailySeedString } from './prng';
 import {
@@ -24,6 +25,7 @@ import {
 import { calculateSolsticeScore, DEFAULT_ECLIPSE_DURATION_SEC } from './scoring';
 
 const STORAGE_KEY = 'solstice-orrery-best-v1';
+const TRIAL_RECORDS_KEY = 'solstice-orrery-records-v5';
 
 export type SnapshotListener = (snapshot: GameSnapshot) => void;
 
@@ -57,6 +59,53 @@ function writeBestRecord(record: BestRecord): void {
   }
 }
 
+function readTrialRecords(): Partial<Record<TrialNumber, TrialRecord>> {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return {};
+    const raw = window.localStorage.getItem(TRIAL_RECORDS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Partial<TrialRecord>>;
+    const out: Partial<Record<TrialNumber, TrialRecord>> = {};
+    for (const key of Object.keys(parsed)) {
+      const t = Number(key) as TrialNumber;
+      const rec = parsed[key];
+      if (
+        t >= 1 &&
+        t <= 7 &&
+        rec &&
+        (rec.stars === 1 || rec.stars === 2 || rec.stars === 3) &&
+        typeof rec.score === 'number' &&
+        typeof rec.moves === 'number' &&
+        typeof rec.elapsedSec === 'number' &&
+        typeof rec.timeRemainingSec === 'number' &&
+        typeof rec.seed === 'string'
+      ) {
+        out[t] = {
+          trial: t,
+          stars: rec.stars,
+          score: rec.score,
+          moves: rec.moves,
+          elapsedSec: rec.elapsedSec,
+          timeRemainingSec: rec.timeRemainingSec,
+          seed: rec.seed,
+        };
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeTrialRecords(records: Partial<Record<TrialNumber, TrialRecord>>): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    window.localStorage.setItem(TRIAL_RECORDS_KEY, JSON.stringify(records));
+  } catch {
+    // Ignore restricted iframe storage errors
+  }
+}
+
 export class GameController {
   private phase: GamePhase = 'title';
   private seed: string;
@@ -76,6 +125,7 @@ export class GameController {
   private apexIgnited = false;
   private score: ScoreBreakdown | null = null;
   private bestRecord: BestRecord | null;
+  private trialRecords: Partial<Record<TrialNumber, TrialRecord>>;
   private lastEvent: GameEvent | null = null;
 
   private listeners = new Set<SnapshotListener>();
@@ -104,6 +154,10 @@ export class GameController {
       this.chimes = initial.chimes;
     }
     this.bestRecord = readBestRecord();
+    this.trialRecords = readTrialRecords();
+    for (const k of Object.keys(this.trialRecords)) {
+      this.completedTrials.add(Number(k) as TrialNumber);
+    }
   }
 
   public subscribe(listener: SnapshotListener): () => void {
@@ -129,6 +183,9 @@ export class GameController {
       currentTrial: this.currentTrial,
       trialMeta: getTrialMetadata(this.currentTrial),
       completedTrials: Array.from(this.completedTrials).sort((a, b) => a - b),
+      trialRecords: Object.fromEntries(
+        Object.entries(this.trialRecords).map(([k, v]) => [k, v ? { ...v } : undefined]),
+      ) as Partial<Record<TrialNumber, TrialRecord>>,
       timeRemainingSec: this.timeRemainingSec,
       durationSec: this.durationSec,
       moves: this.moves,
@@ -384,6 +441,25 @@ export class GameController {
     this.phase = 'won';
     this.cameraMode = 'orbit';
     this.score = calculateSolsticeScore(this.timeRemainingSec, this.moves, this.durationSec);
+
+    const elapsedSec = Math.max(1, Math.round(this.durationSec - this.timeRemainingSec));
+    const prevTrialRec = this.trialRecords[this.currentTrial];
+    if (
+      !prevTrialRec ||
+      this.score.totalScore > prevTrialRec.score ||
+      (this.score.totalScore === prevTrialRec.score && this.moves < prevTrialRec.moves)
+    ) {
+      this.trialRecords[this.currentTrial] = {
+        trial: this.currentTrial,
+        stars: this.score.stars,
+        score: this.score.totalScore,
+        moves: this.moves,
+        elapsedSec,
+        timeRemainingSec: Math.round(this.timeRemainingSec),
+        seed: this.seed,
+      };
+      writeTrialRecords(this.trialRecords);
+    }
 
     if (!this.bestRecord || this.score.totalScore > this.bestRecord.score) {
       this.bestRecord = {

@@ -6,9 +6,18 @@ import { PALETTE } from './palette';
 import type { SanctuaryTextureSet } from './textures';
 import { createFlutedDoricGeometry, WING_POSITIONS } from './environment';
 
+export type HoveredInstrumentTarget =
+  | { kind: 'astrolabe-ring'; ringIndex: number }
+  | { kind: 'mirror'; mirrorIndex: number }
+  | { kind: 'chime'; slotIndex: number }
+  | { kind: 'chime-gong' }
+  | { kind: 'apex-crown' }
+  | null;
+
 export interface ObservatoryInstruments {
   group: THREE.Group;
   interactables: THREE.Object3D[];
+  setHoveredTarget: (target: HoveredInstrumentTarget) => void;
   triggerChimePulse: (slotOrder: number[]) => void;
   triggerChimeStrikeAnim: (slotIndex: number, correct: boolean) => void;
   syncState: (snapshot: GameSnapshot) => void;
@@ -87,6 +96,45 @@ void main() {
   vec3 col = mix(warmEdge, hotTip, pow(fresnel, 1.9)) * shimmer * uIntensity;
   float alpha = clamp(fresnel * 0.66 * uIntensity, 0.0, 0.76);
   gl_FragColor = vec4(col, alpha);
+}
+`;
+
+const ZENITH_PILLAR_VERTEX = /* glsl */ `
+varying vec2 vUv;
+varying vec3 vNormalDir;
+varying vec3 vViewDir;
+
+void main() {
+  vUv = uv;
+  vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+  vNormalDir = normalize(normalMatrix * normal);
+  vViewDir = normalize(-mvPos.xyz);
+  gl_Position = projectionMatrix * mvPos;
+}
+`;
+
+const ZENITH_PILLAR_FRAGMENT = /* glsl */ `
+uniform float uTime;
+uniform float uBloom;
+uniform float uCoreWeight;
+
+varying vec2 vUv;
+varying vec3 vNormalDir;
+varying vec3 vViewDir;
+
+void main() {
+  // Grazing Fresnel falloff keeps silhouette edges velvety without washing out central bronze rings
+  float facing = pow(abs(dot(normalize(vNormalDir), normalize(vViewDir))), 1.55);
+  // Emerge cleanly from above the open lotus petals and feather out into the celestial zenith
+  float baseFade = smoothstep(0.0, 0.11, vUv.y);
+  float topFade = 1.0 - smoothstep(0.55, 1.0, vUv.y);
+  float helix = 0.78 + 0.22 * sin(vUv.y * 28.0 - uTime * 3.4 + vUv.x * 18.85);
+  // Calibrated warm-gold core (#FFE29E) to burnished amber edge (#D4882A) — strictly never pure white
+  vec3 amberEdge = vec3(0.831, 0.533, 0.165);
+  vec3 warmCore  = vec3(1.0, 0.886, 0.620);
+  vec3 col = mix(amberEdge, warmCore, clamp(facing * (0.65 + uCoreWeight * 0.35), 0.0, 1.0));
+  float alpha = facing * baseFade * topFade * helix * uBloom * mix(0.26, 0.42, uCoreWeight);
+  gl_FragColor = vec4(col * 0.94, clamp(alpha, 0.0, 0.46));
 }
 `;
 
@@ -231,14 +279,6 @@ export function createObservatoryInstruments(
     }),
   );
 
-  const quartzMat = trackMat(
-    new THREE.MeshStandardMaterial({
-      color: PALETTE.quartzWhite,
-      roughness: 0.3,
-      metalness: 0.14,
-    }),
-  );
-
   // =========================================================================
   // 1. WEST WING: MECHANICALLY COUPLED GEARED MERIDIAN ASTROLABE
   // =========================================================================
@@ -335,6 +375,7 @@ export function createObservatoryInstruments(
   const gearToothGeo = trackGeo(new THREE.BoxGeometry(0.1, 0.18, 0.12));
   const astrolabeRings: Array<{
     pivot: THREE.Group;
+    ringMat: THREE.MeshStandardMaterial;
     apertureMat: THREE.MeshStandardMaterial;
     targetAngle: number;
     currentAngle: number;
@@ -354,7 +395,11 @@ export function createObservatoryInstruments(
       label: spec.label,
     };
 
-    const torus = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(spec.radius, spec.tube, 18, 64)), dialBronzeMat);
+    const ringMat = trackMat(dialBronzeMat.clone());
+    ringMat.emissive.setHex(PALETTE.moltenGold);
+    ringMat.emissiveIntensity = 0;
+
+    const torus = new THREE.Mesh(trackGeo(new THREE.TorusGeometry(spec.radius, spec.tube, 18, 64)), ringMat);
     torus.castShadow = true;
     torus.userData.interactable = interactData;
     pivot.add(torus);
@@ -362,21 +407,23 @@ export function createObservatoryInstruments(
 
     const innerWire = new THREE.Mesh(
       trackGeo(new THREE.TorusGeometry(spec.radius - spec.tube * 0.92, 0.032, 8, 48)),
-      bronzeMat,
+      ringMat,
     );
     innerWire.userData.interactable = interactData;
     pivot.add(innerWire);
+    interactables.push(innerWire);
 
-    // 24 precision 15-degree magnetic detent teeth on every gear ring
+    // 24 precision 15-degree magnetic detent teeth on every gear ring (clickable directly in 3D)
     for (let g = 0; g < spec.gearTeeth; g += 1) {
       const a = (g / spec.gearTeeth) * Math.PI * 2;
       if (Math.abs(a) < 0.15 || Math.abs(a - Math.PI * 2) < 0.15) continue;
-      const tooth = new THREE.Mesh(gearToothGeo, g % 2 === 0 ? bronzeMat : darkBronzeMat);
+      const tooth = new THREE.Mesh(gearToothGeo, g % 2 === 0 ? ringMat : darkBronzeMat);
       const rOuter = spec.radius + spec.tube + 0.048;
       tooth.position.set(Math.sin(a) * rOuter, Math.cos(a) * rOuter, 0);
       tooth.rotation.z = -a;
       tooth.userData.interactable = interactData;
       pivot.add(tooth);
+      if (g % 2 === 0) interactables.push(tooth);
     }
 
     const apertureMat = trackMat(
@@ -388,7 +435,7 @@ export function createObservatoryInstruments(
         metalness: 0.3,
       }),
     );
-    const crestFrame = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.32, 0)), bronzeMat);
+    const crestFrame = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.32, 0)), ringMat);
     crestFrame.scale.set(1.15, 1.32, 0.72);
     crestFrame.position.set(0, spec.radius, 0);
     crestFrame.userData.interactable = interactData;
@@ -403,6 +450,7 @@ export function createObservatoryInstruments(
 
     astrolabeRings.push({
       pivot,
+      ringMat,
       apertureMat,
       targetAngle: 0,
       currentAngle: 0,
@@ -532,6 +580,7 @@ export function createObservatoryInstruments(
   }> = [];
   const mirrorTurntables: Array<{
     pivot: THREE.Group;
+    highlightMat: THREE.MeshStandardMaterial;
     targetYaw: number;
     currentYaw: number;
     yawVel: number;
@@ -776,7 +825,11 @@ export function createObservatoryInstruments(
         label: `Rotate ${node.label} (90° Clockwise)`,
       };
 
-      const ring = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.7, 0.062, 10, 28)), bronzeMat);
+      const highlightMat = trackDynMat(bronzeMat.clone());
+      highlightMat.emissive.setHex(PALETTE.moltenGold);
+      highlightMat.emissiveIntensity = 0;
+
+      const ring = new THREE.Mesh(trackDynGeo(new THREE.TorusGeometry(0.7, 0.062, 10, 28)), highlightMat);
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 0.44;
       ring.userData.interactable = interactData;
@@ -784,7 +837,7 @@ export function createObservatoryInstruments(
 
       for (let c = 0; c < 12; c += 1) {
         const ca = (c / 12) * Math.PI * 2;
-        const cog = new THREE.Mesh(cogGeo, bronzeMat);
+        const cog = new THREE.Mesh(cogGeo, highlightMat);
         cog.position.set(Math.cos(ca) * 0.76, 0.44, Math.sin(ca) * 0.76);
         cog.rotation.y = -ca;
         pivot.add(cog);
@@ -796,17 +849,17 @@ export function createObservatoryInstruments(
       backHousing.userData.interactable = interactData;
       pivot.add(backHousing);
 
-      const leftPilaster = new THREE.Mesh(pilasterGeo, bronzeMat);
+      const leftPilaster = new THREE.Mesh(pilasterGeo, highlightMat);
       leftPilaster.position.set(-0.52, 1.56, 0.04);
       leftPilaster.userData.interactable = interactData;
       pivot.add(leftPilaster);
 
-      const rightPilaster = new THREE.Mesh(pilasterGeo, bronzeMat);
+      const rightPilaster = new THREE.Mesh(pilasterGeo, highlightMat);
       rightPilaster.position.set(0.52, 1.56, 0.04);
       rightPilaster.userData.interactable = interactData;
       pivot.add(rightPilaster);
 
-      const pediment = new THREE.Mesh(pedimentGeo, bronzeMat);
+      const pediment = new THREE.Mesh(pedimentGeo, highlightMat);
       pediment.position.set(0, 2.82, 0.0);
       pediment.userData.interactable = interactData;
       pivot.add(pediment);
@@ -816,7 +869,7 @@ export function createObservatoryInstruments(
       face.userData.interactable = interactData;
       pivot.add(face);
 
-      const arrow = new THREE.Mesh(arrowGeo, bronzeMat);
+      const arrow = new THREE.Mesh(arrowGeo, highlightMat);
       arrow.position.set(0, 0.56, 0.7);
       arrow.userData.interactable = interactData;
       pivot.add(arrow);
@@ -824,7 +877,7 @@ export function createObservatoryInstruments(
       mirrorDynamicGroup.add(holder);
       interactables.push(backHousing, face, leftPilaster, rightPilaster, pediment, ring, arrow);
       dynamicMirrorInteractables.push(backHousing, face, leftPilaster, rightPilaster, pediment, ring, arrow);
-      mirrorTurntables.push({ pivot, targetYaw: yaw, currentYaw: yaw, yawVel: 0 });
+      mirrorTurntables.push({ pivot, highlightMat, targetYaw: yaw, currentYaw: yaw, yawVel: 0 });
     });
   }
 
@@ -1061,7 +1114,7 @@ export function createObservatoryInstruments(
   apexPedestal.receiveShadow = true;
   apexRoot.add(apexPedestal);
 
-  const apexQuartzRing = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(1.24, 1.28, 0.14, 24)), quartzMat);
+  const apexQuartzRing = new THREE.Mesh(trackGeo(new THREE.CylinderGeometry(1.24, 1.28, 0.14, 24)), darkBronzeMat);
   apexQuartzRing.position.y = 1.26;
   apexRoot.add(apexQuartzRing);
 
@@ -1081,11 +1134,12 @@ export function createObservatoryInstruments(
 
   const apexCoreMat = trackMat(
     new THREE.MeshStandardMaterial({
-      color: PALETTE.solarCore,
+      color: 0xe8a438,
       emissive: PALETTE.solarEmber,
-      emissiveIntensity: 1.4,
-      roughness: 0.1,
-      metalness: 0.25,
+      emissiveIntensity: 0.95,
+      roughness: 0.18,
+      metalness: 0.35,
+      flatShading: true,
     }),
   );
   const apexCore = new THREE.Mesh(trackGeo(new THREE.OctahedronGeometry(0.76, 1)), apexCoreMat);
@@ -1101,12 +1155,16 @@ export function createObservatoryInstruments(
   apexKinetic.add(apexHitProxy);
   interactables.push(apexHitProxy);
 
+  const apexRingMat = trackMat(bronzeMat.clone());
+  apexRingMat.emissive.setHex(PALETTE.moltenGold);
+  apexRingMat.emissiveIntensity = 0;
+
   const apexRings: THREE.Mesh[] = [];
   const apexRingRadii = [1.38, 1.76, 2.16];
   for (let i = 0; i < apexRingRadii.length; i += 1) {
     const rMesh = new THREE.Mesh(
       trackGeo(new THREE.TorusGeometry(apexRingRadii[i], 0.08 - i * 0.01, 14, 56)),
-      i === 1 ? dialBronzeMat : bronzeMat,
+      apexRingMat,
     );
     rMesh.castShadow = true;
     rMesh.userData.interactable = apexInteractData;
@@ -1121,7 +1179,7 @@ export function createObservatoryInstruments(
     holder.rotation.y = (i / 12) * Math.PI * 2;
     const petalPivot = new THREE.Group();
     petalPivot.position.set(0, -0.62, 1.02);
-    const petalMesh = new THREE.Mesh(petalGeo, i % 2 === 0 ? bronzeMat : darkBronzeMat);
+    const petalMesh = new THREE.Mesh(petalGeo, i % 2 === 0 ? apexRingMat : darkBronzeMat);
     petalMesh.castShadow = true;
     petalMesh.userData.interactable = apexInteractData;
     petalPivot.add(petalMesh);
@@ -1130,45 +1188,60 @@ export function createObservatoryInstruments(
     apexPetals.push(petalPivot);
   }
 
+  // Calibrated Warm-Gold Core Zenith Pillar (#FFE29E -> #D4882A) rising cleanly ABOVE the open bronze lotus
+  const zenithOuterUniforms = {
+    uTime: { value: 0 },
+    uBloom: { value: 0 },
+    uCoreWeight: { value: 0.0 },
+  };
+  const zenithInnerUniforms = {
+    uTime: { value: 0 },
+    uBloom: { value: 0 },
+    uCoreWeight: { value: 1.0 },
+  };
   const zenithOuterMat = trackMat(
-    new THREE.MeshBasicMaterial({
-      color: PALETTE.moltenGold,
+    new THREE.ShaderMaterial({
+      vertexShader: ZENITH_PILLAR_VERTEX,
+      fragmentShader: ZENITH_PILLAR_FRAGMENT,
+      uniforms: zenithOuterUniforms,
       transparent: true,
-      opacity: 0,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     }),
   );
   const zenithInnerMat = trackMat(
-    new THREE.MeshBasicMaterial({
-      color: PALETTE.solarCore,
+    new THREE.ShaderMaterial({
+      vertexShader: ZENITH_PILLAR_VERTEX,
+      fragmentShader: ZENITH_PILLAR_FRAGMENT,
+      uniforms: zenithInnerUniforms,
       transparent: true,
-      opacity: 0,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
     }),
   );
   const zenithBeamOuter = new THREE.Mesh(
-    trackGeo(new THREE.CylinderGeometry(0.55, 1.55, 52, 24, 1, true)),
+    trackGeo(new THREE.CylinderGeometry(0.65, 1.32, 46, 24, 1, true)),
     zenithOuterMat,
   );
-  zenithBeamOuter.position.y = 26;
+  zenithBeamOuter.position.y = 28.0;
   zenithBeamOuter.visible = false;
   apexRoot.add(zenithBeamOuter);
 
   const zenithBeamInner = new THREE.Mesh(
-    trackGeo(new THREE.CylinderGeometry(0.2, 0.55, 52, 16, 1, true)),
+    trackGeo(new THREE.CylinderGeometry(0.24, 0.5, 46, 16, 1, true)),
     zenithInnerMat,
   );
-  zenithBeamInner.position.y = 26;
+  zenithBeamInner.position.y = 28.0;
   zenithBeamInner.visible = false;
   apexRoot.add(zenithBeamInner);
 
-  const apexLight = new THREE.PointLight(PALETTE.moltenGold, 2.2, 26, 1.4);
-  apexLight.position.set(0, 3.4, 0);
+  const apexLight = new THREE.PointLight(PALETTE.moltenGold, 1.8, 22, 1.5);
+  apexLight.position.set(0, 3.6, 0);
   apexRoot.add(apexLight);
+
+  let hoveredTarget: HoveredInstrumentTarget = null;
 
   let solvedCount = 0;
   let apexUnlocked = false;
@@ -1194,6 +1267,9 @@ export function createObservatoryInstruments(
   return {
     group,
     interactables,
+    setHoveredTarget: (target) => {
+      hoveredTarget = target;
+    },
     triggerChimePulse: (slotOrder) => {
       pulseQueue = slotOrder.map((slot, idx) => ({
         slot,
@@ -1260,7 +1336,8 @@ export function createObservatoryInstruments(
       const dt = Math.min(0.05, deltaSec);
       const smooth = Math.min(1, dt * 7.5);
 
-      // 1. Animate Astrolabe rings with tactile spring-damped inertia & 15° magnetic snap detent
+      // 1. Animate Astrolabe rings with tactile spring-damped inertia, 15° snap detent & hover molten rim glow
+      const hoverPulse = 0.58 + Math.sin(elapsedSec * 6.0) * 0.16;
       for (let i = 0; i < astrolabeRings.length; i += 1) {
         const r = astrolabeRings[i];
         const diff = shortestAngleDiff(r.currentAngle, r.targetAngle);
@@ -1272,9 +1349,17 @@ export function createObservatoryInstruments(
           r.angularVel = 0;
         }
         r.pivot.rotation.z = r.currentAngle;
+        const isRingHovered =
+          hoveredTarget?.kind === 'astrolabe-ring' && hoveredTarget.ringIndex === i;
+        r.ringMat.emissiveIntensity = THREE.MathUtils.lerp(
+          r.ringMat.emissiveIntensity,
+          isRingHovered ? hoverPulse : r.aligned ? 0.16 : 0.0,
+          smooth,
+        );
         scratchCol.copy(emberCol).lerp(goldCol, r.aligned ? 1 : 0);
         r.apertureMat.emissive.copy(scratchCol);
-        r.apertureMat.emissiveIntensity = r.aligned ? 3.1 + Math.sin(elapsedSec * 2.5) * 0.35 : 1.15;
+        r.apertureMat.emissiveIntensity =
+          (r.aligned ? 2.4 + Math.sin(elapsedSec * 2.5) * 0.25 : 1.05) + (isRingHovered ? 0.45 : 0);
       }
 
       // Engage and spin meshing bronze transfer pinion gears in exact kinematic phase
@@ -1303,7 +1388,8 @@ export function createObservatoryInstruments(
         smooth,
       );
 
-      for (const m of mirrorTurntables) {
+      for (let mIdx = 0; mIdx < mirrorTurntables.length; mIdx += 1) {
+        const m = mirrorTurntables[mIdx];
         const diff = shortestAngleDiff(m.currentYaw, m.targetYaw);
         const acc = diff * 86.0 - m.yawVel * 13.0;
         m.yawVel += acc * dt;
@@ -1313,6 +1399,13 @@ export function createObservatoryInstruments(
           m.yawVel = 0;
         }
         m.pivot.rotation.y = m.currentYaw;
+        const isMirrorHovered =
+          hoveredTarget?.kind === 'mirror' && hoveredTarget.mirrorIndex === mIdx;
+        m.highlightMat.emissiveIntensity = THREE.MathUtils.lerp(
+          m.highlightMat.emissiveIntensity,
+          isMirrorHovered ? hoverPulse * 1.15 : 0.0,
+          smooth,
+        );
       }
 
       for (let i = 0; i < collectorVisuals.length; i += 1) {
@@ -1357,19 +1450,28 @@ export function createObservatoryInstruments(
         }
       }
 
-      for (const bell of chimesVisuals) {
+      gongMat.emissiveIntensity = THREE.MathUtils.lerp(
+        gongMat.emissiveIntensity,
+        hoveredTarget?.kind === 'chime-gong' ? 1.85 : 0.9,
+        smooth,
+      );
+
+      for (let bIdx = 0; bIdx < chimesVisuals.length; bIdx += 1) {
+        const bell = chimesVisuals[bIdx];
         const springAcc = -24 * bell.swingAngle - 4.2 * bell.swingVel;
         bell.swingVel += springAcc * dt;
         bell.swingAngle += bell.swingVel * dt;
         bell.pivot.rotation.x = bell.swingAngle * 0.25;
 
         bell.flashIntensity = Math.max(0, bell.flashIntensity - dt * 2.8);
-        const targetGlow = bell.locked ? 2.4 : 0.55;
-        bell.crownMat.emissive.copy(bell.locked || bell.flashIntensity > 0.4 ? goldCol : emberCol);
+        const isBellHovered = hoveredTarget?.kind === 'chime' && hoveredTarget.slotIndex === bIdx;
+        const targetGlow = (bell.locked ? 2.1 : 0.5) + (isBellHovered ? 0.95 : 0);
+        bell.crownMat.emissive.copy(bell.locked || isBellHovered || bell.flashIntensity > 0.4 ? goldCol : emberCol);
         bell.crownMat.emissiveIntensity = targetGlow + bell.flashIntensity;
 
         const bodyMat = bell.bodyMesh.material as THREE.MeshStandardMaterial;
-        bodyMat.emissiveIntensity = (bell.locked ? 0.52 : 0.1) + bell.flashIntensity * 0.3;
+        bodyMat.emissiveIntensity =
+          (bell.locked ? 0.45 : 0.1) + (isBellHovered ? hoverPulse * 0.75 : 0) + bell.flashIntensity * 0.3;
 
         if (bell.ripplePhase < 1) {
           bell.ripplePhase = Math.min(1, bell.ripplePhase + dt * 1.2);
@@ -1405,19 +1507,29 @@ export function createObservatoryInstruments(
         apexPetals[i].rotation.x = petalTilt + wave;
       }
 
-      scratchCol.copy(emberCol).lerp(goldCol, solvedCount / 3).lerp(coreCol, apexBloomFactor * 0.35);
+      const isApexHovered = hoveredTarget?.kind === 'apex-crown';
+      apexRingMat.emissiveIntensity = THREE.MathUtils.lerp(
+        apexRingMat.emissiveIntensity,
+        isApexHovered ? hoverPulse * 1.05 : apexBloomFactor * 0.22,
+        smooth,
+      );
+
+      scratchCol.copy(emberCol).lerp(goldCol, solvedCount / 3).lerp(coreCol, apexBloomFactor * 0.18);
       apexCoreMat.emissive.copy(scratchCol);
-      const readyPulse = apexUnlocked && !apexIgnited ? Math.sin(elapsedSec * 2.8) * 0.35 : 0;
-      apexCoreMat.emissiveIntensity = 1.1 + solvedCount * 0.32 + readyPulse + apexBloomFactor * 0.72;
-      apexLight.intensity = 1.9 + solvedCount * 0.75 + apexBloomFactor * 1.8;
+      const readyPulse = apexUnlocked && !apexIgnited ? Math.sin(elapsedSec * 2.8) * 0.25 : 0;
+      apexCoreMat.emissiveIntensity =
+        0.72 + solvedCount * 0.16 + readyPulse + apexBloomFactor * 0.35 + (isApexHovered ? 0.3 : 0);
+      apexLight.intensity = 1.45 + solvedCount * 0.35 + apexBloomFactor * 0.85;
 
       const showPillar = apexBloomFactor > 0.03;
       zenithBeamOuter.visible = showPillar;
       zenithBeamInner.visible = showPillar;
-      zenithOuterMat.opacity = apexBloomFactor * 0.24;
-      zenithInnerMat.opacity = apexBloomFactor * 0.38;
-      zenithBeamOuter.rotation.y = elapsedSec * 0.4;
-      zenithBeamInner.rotation.y = -elapsedSec * 0.6;
+      zenithOuterUniforms.uTime.value = elapsedSec;
+      zenithOuterUniforms.uBloom.value = apexBloomFactor;
+      zenithInnerUniforms.uTime.value = elapsedSec * 1.25;
+      zenithInnerUniforms.uBloom.value = apexBloomFactor;
+      zenithBeamOuter.rotation.y = elapsedSec * 0.32;
+      zenithBeamInner.rotation.y = -elapsedSec * 0.5;
     },
     getApexBloomFactor: () => apexBloomFactor,
     dispose: () => {

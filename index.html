@@ -11,7 +11,7 @@
     />
     <meta
       name="description"
-      content="Walk an obsidian Doric sanctuary, mesh coupled bronze gears, split molten sunbeams across seven progressive trials, and ignite the Solstice Apex before eclipse falls."
+      content="Walk an obsidian Doric sanctuary, click forged bronze gears directly in 3D, split molten sunbeams across seven trials, and ignite the Solstice Apex."
     />
     <link rel="stylesheet" href="./src/style.css" />
   </head>
@@ -23,22 +23,34 @@
         <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
         <div id="walk-prompt" class="walk-prompt" role="status" aria-live="polite" hidden>
           <kbd>E</kbd>
-          <span id="walk-prompt-text">Interact with Meridian Astrolabe</span>
+          <span id="walk-prompt-text">Rotate Meridian Astrolabe Ring</span>
         </div>
       </div>
 
-      <header class="hud-top" aria-label="Sanctuary status bar">
-        <div class="hud-brand">
-          <svg class="brand-seal" viewBox="0 0 36 36" width="28" height="28" aria-hidden="true">
-            <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1.4" />
-            <circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="1.1" stroke-dasharray="3 2" />
-            <circle cx="18" cy="18" r="3.4" fill="currentColor" />
-            <path d="M18 1v6M18 29v6M1 18h6M29 18h6M6 6l4 4M26 26l4 4M30 6l-4 4M10 26l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-          </svg>
-          <div class="brand-text">
+      <!-- Zone 1: Single Minimalist Bronze Sundial Top Bar (Trials I-VII + Telemetry + Controls) -->
+      <header class="hud-top" aria-label="Sanctuary sundial bar">
+        <div class="hud-left">
+          <div class="hud-brand" title="Solstice Orrery: Keeper of the Brass Sky">
+            <svg class="brand-seal" viewBox="0 0 36 36" width="22" height="22" aria-hidden="true">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" stroke-width="1.5" />
+              <circle cx="18" cy="18" r="9.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 2" />
+              <circle cx="18" cy="18" r="3.4" fill="currentColor" />
+              <path d="M18 1v6M18 29v6M1 18h6M29 18h6M6 6l4 4M26 26l4 4M30 6l-4 4M10 26l-4 4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+            </svg>
             <span class="brand-title">Solstice Orrery</span>
-            <span id="seed-label" class="brand-seed">Trial I: Dawn Meridian</span>
+            <span id="seed-label" class="sr-only">Trial I: Dawn Meridian</span>
           </div>
+
+          <nav id="trial-strip" class="trial-strip" aria-label="Seven Celestial Trials">
+            <button type="button" class="trial-btn is-active" data-trial="1" title="Trial I: Dawn Meridian">I</button>
+            <button type="button" class="trial-btn" data-trial="2" title="Trial II: Twin Pillar Deflection">II</button>
+            <button type="button" class="trial-btn" data-trial="3" title="Trial III: Dual Prism Relay">III</button>
+            <button type="button" class="trial-btn" data-trial="4" title="Trial IV: Obsidian Labyrinth">IV</button>
+            <button type="button" class="trial-btn" data-trial="5" title="Trial V: Coupled Pinion Resonance">V</button>
+            <button type="button" class="trial-btn" data-trial="6" title="Trial VI: Harmonic Counter-Gear">VI</button>
+            <button type="button" class="trial-btn" data-trial="7" title="Trial VII: Grand Solstice Eclipse Finale">VII</button>
+            <span id="trial-stage-tag" class="trial-stage-tag">Noon Gold</span>
+          </nav>
         </div>
 
         <div class="hud-telemetry">
@@ -47,7 +59,6 @@
             <span id="timer-value" class="telemetry-value">05:00</span>
           </div>
           <div class="telemetry-cell conduits-cell" aria-label="Solar conduits awakened">
-            <span class="telemetry-label">Conduits</span>
             <div class="conduit-bars" id="conduit-bars" aria-hidden="true">
               <span class="conduit-seg" data-puzzle="astrolabe" title="Meridian Astrolabe"></span>
               <span class="conduit-seg" data-puzzle="mirrors" title="Mirror Courtyard"></span>
@@ -69,13 +80,22 @@
             title="Switch between Astronomer Orbit and Walk Sanctuary (V)"
             aria-pressed="false"
           >
-            <span id="camera-mode-label">Walk Sanctuary</span><kbd>V</kbd>
+            <span id="camera-mode-label">Walk</span><kbd>V</kbd>
+          </button>
+          <button
+            type="button"
+            id="btn-cinema"
+            class="icon-btn"
+            title="Toggle Cinema minimalist view (C)"
+            aria-pressed="false"
+          >
+            <span>Cinema</span><kbd>C</kbd>
+          </button>
+          <button type="button" id="btn-records" class="icon-btn" title="Session best tempo chronicle">
+            <span>Chronicle</span>
           </button>
           <button type="button" id="btn-hint" class="icon-btn" title="Toggle field hint (H)" aria-expanded="false" aria-controls="hint-drawer">
             <span>Hint</span><kbd>H</kbd>
-          </button>
-          <button type="button" id="btn-reset-view" class="icon-btn" title="Reset vantage point (R)">
-            <span>View</span><kbd>R</kbd>
           </button>
           <button type="button" id="btn-mute" class="icon-btn" title="Toggle sound and voice (M)" aria-pressed="false">
             <span id="mute-label">Sound</span><kbd>M</kbd>
@@ -86,17 +106,9 @@
         </div>
       </header>
 
-      <nav id="trial-strip" class="trial-strip" aria-label="Seven Celestial Trials">
-        <span class="trial-strip-label">Trial</span>
-        <button type="button" class="trial-btn is-active" data-trial="1" title="Trial I: Dawn Meridian">I</button>
-        <button type="button" class="trial-btn" data-trial="2" title="Trial II: Twin Pillar Deflection">II</button>
-        <button type="button" class="trial-btn" data-trial="3" title="Trial III: Dual Prism Relay">III</button>
-        <button type="button" class="trial-btn" data-trial="4" title="Trial IV: Obsidian Labyrinth">IV</button>
-        <button type="button" class="trial-btn" data-trial="5" title="Trial V: Coupled Pinion Resonance">V</button>
-        <button type="button" class="trial-btn" data-trial="6" title="Trial VI: Harmonic Counter-Gear">VI</button>
-        <button type="button" class="trial-btn" data-trial="7" title="Trial VII: Grand Solstice Eclipse Finale">VII</button>
-        <span id="trial-stage-tag" class="trial-stage-tag">Noon Gold</span>
-      </nav>
+      <button type="button" id="btn-cinema-exit" class="cinema-exit-btn" title="Exit Cinema view (C)" hidden>
+        <span>Exit Cinema</span><kbd>C</kbd>
+      </button>
 
       <aside id="hint-drawer" class="hint-drawer" aria-label="Sanctuary field note" hidden>
         <div class="hint-header">
@@ -106,15 +118,16 @@
         <p id="hint-body" class="hint-body"></p>
       </aside>
 
+      <!-- Compact Single-Line Contextual Bar (Hidden in Overview & Walk Mode for >= 82% clear 3D view) -->
       <section id="station-bar" class="station-bar" aria-label="Instrument controls" hidden>
         <div class="station-meta">
-          <span id="station-kicker" class="station-kicker">West Wing</span>
           <strong id="station-name" class="station-name">Meridian Astrolabe</strong>
-          <span id="station-status" class="station-status">Align all 3 bronze apertures to zenith</span>
+          <span id="station-status" class="station-status">Click 3D bronze rings directly or align below</span>
         </div>
         <div id="station-controls" class="station-controls"></div>
       </section>
 
+      <!-- Zone 2: Minimal Bottom Stepping Pad Dock -->
       <nav class="pad-dock" aria-label="Sanctuary stepping pads">
         <button type="button" class="pad-btn" data-pad="overview">Overview</button>
         <button type="button" class="pad-btn" data-pad="astrolabe">Astrolabe</button>
@@ -129,20 +142,20 @@
           <h1 id="title-modal-heading" class="dialog-title">Solstice Orrery</h1>
           <p class="dialog-subtitle">Keeper of the Brass Sky (VIVERSE Spark 2026)</p>
           <p class="dialog-lead">
-            Ascend the obsidian Doric sanctuary across seven progressive celestial trials. Switch freely between Astronomer Orbit and First-Person Sanctuary Walkaround, mesh coupled bronze gear rings, split molten sunbeams through dichroic prisms, and ignite the Solstice Apex Crown before the eclipse seals the sky.
+            Walk an obsidian Doric sanctuary across seven progressive celestial trials. Click geared bronze rings, basalt reflector obelisks, and temple bells directly in 3D space, split molten sunbeams through dichroic prisms, and ignite the Solstice Apex Crown before the eclipse seals the sky.
           </p>
           <div class="dialog-pillars">
             <div class="pillar-item">
-              <strong>1. Coupled Bronze Gears</strong>
-              <span>Align three 15° magnetic-detent astrolabe rings, mastering 1:-0.5 and 1:+1 meshed pinion trains in advanced trials.</span>
+              <strong>1. Direct 3D Bronze Gears</strong>
+              <span>Hover and click 15° magnetic-detent astrolabe rings directly in Orbit or Walk mode, mastering 1:-0.5 and 1:+1 pinion trains.</span>
             </div>
             <div class="pillar-item">
               <strong>2. Beam Splitter Courtyard</strong>
-              <span>Pivot carved basalt reflectors to steer and bifurcate flowing molten sunbeams into up to three collector prisms.</span>
+              <span>Turn carved basalt obelisks directly in 3D to steer and bifurcate molten sunbeams into up to three collector prisms.</span>
             </div>
             <div class="pillar-item">
-              <strong>3. Harmonic Sun-Chimes</strong>
-              <span>Watch and hear the golden pulse, then strike the four suspended temple bells from lowest to highest resonance.</span>
+              <strong>3. Pythagorean Sun-Chimes</strong>
+              <span>Layer bronze harmonic fifths (C4, G4, D5, A5) as each conduit awakens, culminating in the Trial VII Great Solar Chord.</span>
             </div>
           </div>
           <div class="dialog-seed-row">
@@ -155,12 +168,12 @@
             <button type="button" id="btn-start-sandbox" class="btn-ghost">Free Explore</button>
           </div>
           <p class="dialog-footnote">
-            Press V to toggle First-Person Walk Sanctuary, WASD or Arrow keys to stroll past the 16 fluted columns, E to interact nearby, and R, H, or M for shortcuts.
+            Press V for First-Person Walk Sanctuary, C for Cinema view, E to interact nearby, and R, H, or M for shortcuts.
           </p>
         </div>
       </dialog>
 
-      <!-- Native Modal: Victory -->
+      <!-- Native Modal: Victory + Personal Best Tempo Summary -->
       <dialog id="modal-victory" class="sanctuary-dialog" aria-labelledby="victory-modal-heading">
         <div class="dialog-frame">
           <h1 id="victory-modal-heading" class="dialog-title">The Brass Sky Shines</h1>
@@ -184,12 +197,25 @@
               <strong id="victory-seed" class="stat-num">Trial I</strong>
             </div>
           </div>
+          <p id="victory-tempo-note" class="tempo-summary-line"></p>
           <div class="dialog-actions">
             <button type="button" id="btn-victory-next-trial" class="btn-primary" autofocus>Advance to Trial II</button>
             <button type="button" id="btn-victory-sandbox" class="btn-secondary">Free Explore Sandbox</button>
             <button type="button" id="btn-victory-daily" class="btn-ghost">Replay Trial I</button>
             <button type="button" id="btn-victory-random" class="btn-ghost">New Random Seed</button>
           </div>
+        </div>
+      </dialog>
+
+      <!-- Native Modal: VIVERSE Session & Personal Best Tempo Chronicle -->
+      <dialog id="modal-records" class="sanctuary-dialog" closedby="any" aria-labelledby="records-modal-heading">
+        <div class="dialog-frame">
+          <h1 id="records-modal-heading" class="dialog-title">Keeper’s Trial Chronicle</h1>
+          <p id="records-overview" class="dialog-lead">Personal best completion pace across all seven celestial trials (persisted locally).</p>
+          <div id="records-grid" class="records-grid" aria-live="polite"></div>
+          <form method="dialog" class="dialog-actions">
+            <button type="submit" value="close" class="btn-primary" autofocus>Return to Sanctuary</button>
+          </form>
         </div>
       </dialog>
 
@@ -213,10 +239,10 @@
         <div class="dialog-frame">
           <h1 id="guide-modal-heading" class="dialog-title">Navigation and Instruments</h1>
           <ul class="guide-list">
-            <li><strong>Walk Sanctuary &amp; Astronomer Orbit:</strong> Press <code>V</code> or click the camera mode button to glide smoothly between overhead Orbit and First-Person Walkaround with stone-column collision detection.</li>
-            <li><strong>Walkaround Movement &amp; Proximity:</strong> Use <code>WASD</code> or Arrow keys to walk the colonnade, drag to look around with zero head-bob, and press <code>E</code> (or click directly in 3D) when approaching any instrument.</li>
-            <li><strong>Seven Celestial Trials:</strong> Use the top-left Trial strip (<code>I</code> through <code>VII</code>) to advance from Noon Gold single-beam calibration to Trials V through VII coupled bronze gears (<code>1:-0.5</code> and <code>1:+1</code>) and crimson-eclipse multi-beam splitters.</li>
-            <li><strong>Keyboard Shortcuts:</strong> Press <code>V</code> for Walk/Orbit, <code>E</code> for nearby action, <code>H</code> for Field Hint, <code>R</code> to Reset View, <code>M</code> to Mute Audio, and <code>1</code> through <code>5</code> for Stepping Pads.</li>
+            <li><strong>Direct 3D Manipulation:</strong> Hover any bronze astrolabe ring, basalt mirror obelisk, suspended temple bell, or the central Apex Crown in 3D to highlight its molten edge, then click directly to rotate, strike, or ignite.</li>
+            <li><strong>Walk Sanctuary &amp; Astronomer Orbit:</strong> Press <code>V</code> to glide between overhead Orbit and First-Person Walkaround with stone-column collision detection. Use <code>WASD</code> or Arrow keys to walk, drag to look, and press <code>E</code> near any instrument.</li>
+            <li><strong>Cinema View &amp; Seven Trials:</strong> Press <code>C</code> to toggle uncluttered Cinema viewing. Select Trials <code>I</code> through <code>VII</code> in the top sundial bar to explore coupled bronze gears (<code>1:-0.5</code> and <code>1:+1</code>) and multi-beam dichroic splitters.</li>
+            <li><strong>Shortcuts:</strong> <code>V</code> Walk/Orbit, <code>C</code> Cinema View, <code>E</code> Nearby Action, <code>H</code> Field Hint, <code>R</code> Reset View, <code>M</code> Mute Audio, and <code>1</code> through <code>5</code> Stepping Pads.</li>
             <li><strong>Win and Lose Rules:</strong> Awaken all 3 instruments and ignite the Solstice Apex Crown before the 5:00 Eclipse Countdown reaches zero to ignite the Dawn Corona breakthrough.</li>
           </ul>
           <form method="dialog" class="dialog-actions">

@@ -1,6 +1,6 @@
 import type { GameSnapshot, StationId, TrialNumber } from '../game/types';
 import { MIRROR_ORIENTATION_LABELS } from '../game/mirrors';
-import { ASTROLABE_STEPS } from '../game/puzzles';
+import { ASTROLABE_STEPS, TRIAL_CATALOG } from '../game/puzzles';
 import { formatCountdown } from '../game/scoring';
 
 export interface HudActions {
@@ -25,9 +25,34 @@ const BELL_ROMAN = ['I', 'II', 'III', 'IV'] as const;
 const TRIAL_ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'] as const;
 const RING_SHORT = ['Outer', 'Mid', 'Inner'] as const;
 
+export const TOAST_AUTO_FADE_MS = 2400;
+
+/**
+ * Pure Cinema minimalist viewing mode state helper (used by UI and Vitest).
+ */
+export class CinemaModeController {
+  private active = false;
+
+  public isActive(): boolean {
+    return this.active;
+  }
+
+  public setActive(next: boolean): boolean {
+    this.active = next;
+    return this.active;
+  }
+
+  public toggle(): boolean {
+    this.active = !this.active;
+    return this.active;
+  }
+}
+
 export class ObservatoryHud {
   private readonly actions: HudActions;
+  private readonly cinema = new CinemaModeController();
 
+  private readonly appShell: HTMLElement;
   private readonly seedLabel: HTMLElement;
   private readonly timerCard: HTMLElement;
   private readonly timerValue: HTMLElement;
@@ -42,6 +67,8 @@ export class ObservatoryHud {
 
   private readonly cameraModeBtn: HTMLButtonElement;
   private readonly cameraModeLabel: HTMLElement;
+  private readonly cinemaBtn: HTMLButtonElement;
+  private readonly cinemaExitBtn: HTMLButtonElement;
   private readonly trialButtons: NodeListOf<HTMLButtonElement>;
   private readonly trialStageTag: HTMLElement;
 
@@ -52,7 +79,6 @@ export class ObservatoryHud {
   private readonly muteLabel: HTMLElement;
 
   private readonly stationBar: HTMLElement;
-  private readonly stationKicker: HTMLElement;
   private readonly stationName: HTMLElement;
   private readonly stationStatus: HTMLElement;
   private readonly stationControls: HTMLElement;
@@ -60,6 +86,7 @@ export class ObservatoryHud {
 
   private readonly modalTitle: HTMLDialogElement;
   private readonly modalVictory: HTMLDialogElement;
+  private readonly modalRecords: HTMLDialogElement;
   private readonly modalTimeout: HTMLDialogElement;
   private readonly modalGuide: HTMLDialogElement;
 
@@ -72,18 +99,22 @@ export class ObservatoryHud {
   private readonly victoryMoves: HTMLElement;
   private readonly victoryScore: HTMLElement;
   private readonly victorySeed: HTMLElement;
+  private readonly victoryTempoNote: HTMLElement;
+  private readonly recordsOverview: HTMLElement;
+  private readonly recordsGrid: HTMLElement;
   private readonly timeoutSummary: HTMLElement;
 
   private hintOpen = false;
-  private toastTimeout: number | null = null;
+  private toastFadeTimeout: number | null = null;
+  private toastHideTimeout: number | null = null;
   private lastPhase: GameSnapshot['phase'] | null = null;
   private lastRenderedStationKey = '';
   private currentSnapshot: GameSnapshot | null = null;
-  private walkNearbyStation: Exclude<StationId, 'overview'> | null = null;
 
   constructor(actions: HudActions) {
     this.actions = actions;
 
+    this.appShell = this.req<HTMLElement>('app');
     this.seedLabel = this.req<HTMLElement>('seed-label');
     this.timerCard = this.req<HTMLElement>('timer-card');
     this.timerValue = this.req<HTMLElement>('timer-value');
@@ -98,6 +129,8 @@ export class ObservatoryHud {
 
     this.cameraModeBtn = this.req<HTMLButtonElement>('btn-camera-mode');
     this.cameraModeLabel = this.req<HTMLElement>('camera-mode-label');
+    this.cinemaBtn = this.req<HTMLButtonElement>('btn-cinema');
+    this.cinemaExitBtn = this.req<HTMLButtonElement>('btn-cinema-exit');
     this.trialButtons = document.querySelectorAll<HTMLButtonElement>('#trial-strip .trial-btn');
     this.trialStageTag = this.req<HTMLElement>('trial-stage-tag');
 
@@ -108,7 +141,6 @@ export class ObservatoryHud {
     this.muteLabel = this.req<HTMLElement>('mute-label');
 
     this.stationBar = this.req<HTMLElement>('station-bar');
-    this.stationKicker = this.req<HTMLElement>('station-kicker');
     this.stationName = this.req<HTMLElement>('station-name');
     this.stationStatus = this.req<HTMLElement>('station-status');
     this.stationControls = this.req<HTMLElement>('station-controls');
@@ -116,6 +148,7 @@ export class ObservatoryHud {
 
     this.modalTitle = this.req<HTMLDialogElement>('modal-title');
     this.modalVictory = this.req<HTMLDialogElement>('modal-victory');
+    this.modalRecords = this.req<HTMLDialogElement>('modal-records');
     this.modalTimeout = this.req<HTMLDialogElement>('modal-timeout');
     this.modalGuide = this.req<HTMLDialogElement>('modal-guide');
 
@@ -128,6 +161,9 @@ export class ObservatoryHud {
     this.victoryMoves = this.req<HTMLElement>('victory-moves');
     this.victoryScore = this.req<HTMLElement>('victory-score');
     this.victorySeed = this.req<HTMLElement>('victory-seed');
+    this.victoryTempoNote = this.req<HTMLElement>('victory-tempo-note');
+    this.recordsOverview = this.req<HTMLElement>('records-overview');
+    this.recordsGrid = this.req<HTMLElement>('records-grid');
     this.timeoutSummary = this.req<HTMLElement>('timeout-summary');
 
     this.bindControls();
@@ -190,6 +226,18 @@ export class ObservatoryHud {
       this.actions.onToggleCameraMode();
     });
 
+    this.cinemaBtn.addEventListener('click', () => this.toggleCinemaMode());
+    this.cinemaExitBtn.addEventListener('click', () => this.setCinemaMode(false));
+
+    this.req<HTMLButtonElement>('btn-records').addEventListener('click', () => {
+      if (this.currentSnapshot) {
+        this.renderRecordsModal(this.currentSnapshot);
+      }
+      if (!this.modalRecords.open) {
+        this.modalRecords.showModal();
+      }
+    });
+
     this.trialButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
         const trialNum = Number(btn.dataset.trial) as TrialNumber;
@@ -204,10 +252,6 @@ export class ObservatoryHud {
 
     this.hintBtn.addEventListener('click', () => this.toggleHint());
     this.req<HTMLButtonElement>('btn-close-hint').addEventListener('click', () => this.setHintOpen(false));
-    this.req<HTMLButtonElement>('btn-reset-view').addEventListener('click', () => {
-      this.actions.onResetView();
-      this.showToast('Vantage point centered');
-    });
     this.muteBtn.addEventListener('click', () => this.toggleMute());
     this.req<HTMLButtonElement>('btn-guide').addEventListener('click', () => {
       if (!this.modalGuide.open) {
@@ -215,7 +259,13 @@ export class ObservatoryHud {
       }
     });
 
-    for (const dlg of [this.modalTitle, this.modalVictory, this.modalTimeout, this.modalGuide]) {
+    for (const dlg of [
+      this.modalTitle,
+      this.modalVictory,
+      this.modalRecords,
+      this.modalTimeout,
+      this.modalGuide,
+    ]) {
       dlg.addEventListener('close', () => {
         dlg.returnValue = '';
       });
@@ -259,9 +309,29 @@ export class ObservatoryHud {
     return (
       this.modalTitle.open ||
       this.modalVictory.open ||
+      this.modalRecords.open ||
       this.modalTimeout.open ||
       this.modalGuide.open
     );
+  }
+
+  public isCinemaMode(): boolean {
+    return this.cinema.isActive();
+  }
+
+  public setCinemaMode(enabled: boolean): boolean {
+    const active = this.cinema.setActive(enabled);
+    this.appShell.classList.toggle('is-cinema', active);
+    this.cinemaBtn.setAttribute('aria-pressed', String(active));
+    this.cinemaExitBtn.hidden = !active;
+    if (active) {
+      this.setHintOpen(false);
+    }
+    return active;
+  }
+
+  public toggleCinemaMode(): boolean {
+    return this.setCinemaMode(!this.cinema.isActive());
   }
 
   public toggleHint(): void {
@@ -281,11 +351,11 @@ export class ObservatoryHud {
     const muted = this.actions.onToggleMute();
     this.muteBtn.setAttribute('aria-pressed', String(muted));
     this.muteLabel.textContent = muted ? 'Muted' : 'Sound';
-    this.showToast(muted ? 'Sanctuary audio and voice muted' : 'Sanctuary audio and voice enabled');
+    this.showToast(muted ? 'Sanctuary audio muted' : 'Sanctuary audio enabled');
   }
 
   public setHoverLabel(label: string | null): void {
-    if (!label || this.isAnyModalOpen()) {
+    if (!label || this.isAnyModalOpen() || this.cinema.isActive()) {
       this.hoverPill.hidden = true;
       return;
     }
@@ -294,12 +364,13 @@ export class ObservatoryHud {
   }
 
   public setWalkPrompt(station: Exclude<StationId, 'overview'> | null): void {
-    this.walkNearbyStation = station;
-    if (!station || this.isAnyModalOpen() || this.currentSnapshot?.cameraMode !== 'walk') {
+    if (
+      !station ||
+      this.isAnyModalOpen() ||
+      this.cinema.isActive() ||
+      this.currentSnapshot?.cameraMode !== 'walk'
+    ) {
       this.walkPrompt.hidden = true;
-      if (this.currentSnapshot) {
-        this.renderStationBar(this.currentSnapshot);
-      }
       return;
     }
     const labels: Record<Exclude<StationId, 'overview'>, string> = {
@@ -310,21 +381,27 @@ export class ObservatoryHud {
     };
     this.walkPromptText.textContent = labels[station];
     this.walkPrompt.hidden = false;
-    if (this.currentSnapshot) {
-      this.renderStationBar(this.currentSnapshot);
-    }
   }
 
   public showToast(message: string): void {
+    if (this.cinema.isActive()) return;
     this.toastBanner.textContent = message;
+    this.toastBanner.classList.remove('is-fading');
     this.toastBanner.hidden = false;
-    if (this.toastTimeout !== null) {
-      window.clearTimeout(this.toastTimeout);
-    }
-    this.toastTimeout = window.setTimeout(() => {
+
+    if (this.toastFadeTimeout !== null) window.clearTimeout(this.toastFadeTimeout);
+    if (this.toastHideTimeout !== null) window.clearTimeout(this.toastHideTimeout);
+
+    this.toastFadeTimeout = window.setTimeout(() => {
+      this.toastBanner.classList.add('is-fading');
+      this.toastFadeTimeout = null;
+    }, Math.max(400, TOAST_AUTO_FADE_MS - 260));
+
+    this.toastHideTimeout = window.setTimeout(() => {
       this.toastBanner.hidden = true;
-      this.toastTimeout = null;
-    }, 3200);
+      this.toastBanner.classList.remove('is-fading');
+      this.toastHideTimeout = null;
+    }, TOAST_AUTO_FADE_MS);
   }
 
   public updateTimerOnly(snapshot: GameSnapshot): void {
@@ -353,9 +430,8 @@ export class ObservatoryHud {
 
     const isWalk = snapshot.cameraMode === 'walk';
     this.cameraModeBtn.setAttribute('aria-pressed', String(isWalk));
-    this.cameraModeLabel.textContent = isWalk ? 'Astronomer Orbit' : 'Walk Sanctuary';
+    this.cameraModeLabel.textContent = isWalk ? 'Orbit' : 'Walk';
     if (!isWalk) {
-      this.walkNearbyStation = null;
       this.walkPrompt.hidden = true;
     }
 
@@ -418,13 +494,13 @@ export class ObservatoryHud {
         case 'camera-mode-changed':
           this.showToast(
             snapshot.lastEvent.mode === 'walk'
-              ? 'First-Person Walk Sanctuary active (WASD to walk, E to interact)'
+              ? 'Walk Sanctuary active (WASD walk, E or click 3D to interact)'
               : 'Astronomer Orbit vantage active',
           );
           break;
         case 'astrolabe-rotated':
           if (snapshot.lastEvent.solved) {
-            this.showToast('Meridian Astrolabe aligned: West molten conduit ignited!');
+            this.showToast('Meridian Astrolabe aligned: West conduit lit!');
           }
           break;
         case 'mirror-rotated':
@@ -432,21 +508,21 @@ export class ObservatoryHud {
             const totalC = (snapshot.mirrors.collectors ?? [snapshot.mirrors.collector]).length;
             this.showToast(
               totalC > 1
-                ? `All ${totalC} Collector Prisms ignited: East molten conduit flowing!`
-                : 'Collector Prism ignited: East molten conduit flowing!',
+                ? `All ${totalC} Collector Prisms blazing: East conduit lit!`
+                : 'Collector Prism ignited: East conduit lit!',
             );
           }
           break;
         case 'chime-struck':
           if (snapshot.lastEvent.solved) {
-            this.showToast('Harmonic Sun-Chimes resonated: North molten conduit lit!');
+            this.showToast('Harmonic Sun-Chimes resonated: North conduit lit!');
           } else if (!snapshot.lastEvent.correct) {
-            this.showToast('Out of ascending harmonic order. Press Pulse Sequence to listen again.');
+            this.showToast('Strike ascending low to high. Click the gong or press Space to hear again.');
           }
           break;
         case 'apex-locked':
           this.showToast(
-            `${snapshot.lastEvent.remaining} solar conduit${snapshot.lastEvent.remaining === 1 ? '' : 's'} still dormant before the Apex can ignite.`,
+            `${snapshot.lastEvent.remaining} solar conduit${snapshot.lastEvent.remaining === 1 ? '' : 's'} still dormant.`,
           );
           break;
         default:
@@ -460,12 +536,54 @@ export class ObservatoryHud {
     }
   }
 
+  private renderRecordsModal(snapshot: GameSnapshot): void {
+    const cleared = Object.keys(snapshot.trialRecords).length;
+    const totalScore = Object.values(snapshot.trialRecords).reduce(
+      (sum, rec) => sum + (rec?.score ?? 0),
+      0,
+    );
+    this.recordsOverview.textContent =
+      cleared > 0
+        ? `${cleared}/7 Celestial Trials mastered (Combined Best Score: ${totalScore.toLocaleString()} pts).`
+        : 'Complete any trial to record your best moves, completion pace, and star rating locally.';
+
+    this.recordsGrid.innerHTML = '';
+    for (const meta of TRIAL_CATALOG) {
+      const rec = snapshot.trialRecords[meta.number];
+      const roman = TRIAL_ROMAN[meta.number - 1];
+      const row = document.createElement('div');
+      row.className = `record-row${rec ? ' is-cleared' : ''}`;
+
+      const title = document.createElement('span');
+      title.className = 'record-title';
+      title.textContent = `Trial ${roman}: ${meta.title}`;
+
+      const pace = document.createElement('span');
+      pace.className = 'record-metric';
+      pace.textContent = rec ? `${rec.elapsedSec}s pace` : 'Unclaimed';
+
+      const moves = document.createElement('span');
+      moves.className = 'record-metric';
+      moves.textContent = rec ? `${rec.moves} moves` : 'Ready';
+
+      const stars = document.createElement('span');
+      stars.className = 'record-stars';
+      stars.textContent = rec
+        ? `${'★'.repeat(rec.stars)}${'☆'.repeat(3 - rec.stars)}`
+        : '☆☆☆';
+
+      row.append(title, pace, moves, stars);
+      this.recordsGrid.appendChild(row);
+    }
+  }
+
   private syncPhaseModals(snapshot: GameSnapshot): void {
     const roman = TRIAL_ROMAN[snapshot.currentTrial - 1] ?? 'I';
     if (snapshot.phase === 'title') {
       this.titleSeedBadge.textContent = `Daily Seed: ${snapshot.seed}`;
+      const cleared = Object.keys(snapshot.trialRecords).length;
       this.titleBestBadge.textContent = snapshot.bestRecord
-        ? `Best: ${'★'.repeat(snapshot.bestRecord.stars)} ${snapshot.bestRecord.score.toLocaleString()} pts`
+        ? `Best: ${'★'.repeat(snapshot.bestRecord.stars)} ${snapshot.bestRecord.score.toLocaleString()} pts (${cleared}/7 Trials)`
         : '7 Progressive Celestial Trials';
       this.closeDialog(this.modalVictory);
       this.closeDialog(this.modalTimeout);
@@ -473,6 +591,7 @@ export class ObservatoryHud {
         this.modalTitle.showModal();
       }
     } else if (snapshot.phase === 'won') {
+      this.setCinemaMode(false);
       this.closeDialog(this.modalTitle);
       this.closeDialog(this.modalTimeout);
       const hasNext = snapshot.currentTrial < 7;
@@ -487,6 +606,11 @@ export class ObservatoryHud {
         this.victoryMoves.textContent = String(snapshot.moves);
         this.victoryScore.textContent = snapshot.score.totalScore.toLocaleString();
         this.victorySeed.textContent = `Trial ${roman}`;
+        const cleared = Object.keys(snapshot.trialRecords).length;
+        const bestForTrial = snapshot.trialRecords[snapshot.currentTrial];
+        this.victoryTempoNote.textContent = bestForTrial
+          ? `Session Chronicle: ${cleared}/7 Trials mastered (Trial ${roman} Best: ${bestForTrial.moves} moves in ${bestForTrial.elapsedSec}s)`
+          : `Session Chronicle: ${cleared}/7 Trials mastered`;
         this.victorySummary.textContent =
           snapshot.currentTrial === 7
             ? 'Grand Solstice Eclipse conquered! All three split molten beams shattered the crimson eclipse into Dawn Corona radiance.'
@@ -498,6 +622,7 @@ export class ObservatoryHud {
         this.modalVictory.showModal();
       }
     } else if (snapshot.phase === 'lost') {
+      this.setCinemaMode(false);
       this.closeDialog(this.modalTitle);
       this.closeDialog(this.modalVictory);
       this.timeoutSummary.textContent = `You awakened ${snapshot.solvedCount} of 3 solar conduits on Trial ${roman} before the eclipse sealed the sanctuary. Rewind this trial or try a fresh alignment.`;
@@ -512,14 +637,11 @@ export class ObservatoryHud {
   }
 
   private renderStationBar(snapshot: GameSnapshot): void {
-    const displayedStation: StationId =
-      snapshot.cameraMode === 'walk' && this.walkNearbyStation
-        ? this.walkNearbyStation
-        : snapshot.activeStation;
-
+    // Keep Overview AND Walk Sanctuary modes completely free of bottom drawer clutter
     const showBar =
       (snapshot.phase === 'playing' || snapshot.phase === 'sandbox') &&
-      displayedStation !== 'overview';
+      snapshot.cameraMode === 'orbit' &&
+      snapshot.activeStation !== 'overview';
     this.stationBar.hidden = !showBar;
     if (!showBar) {
       this.lastRenderedStationKey = '';
@@ -527,7 +649,7 @@ export class ObservatoryHud {
     }
 
     const stateKey = JSON.stringify({
-      station: displayedStation,
+      station: snapshot.activeStation,
       trial: snapshot.currentTrial,
       phase: snapshot.phase,
       astro: snapshot.astrolabe,
@@ -546,23 +668,22 @@ export class ObservatoryHud {
 
     this.stationControls.innerHTML = '';
 
-    if (displayedStation === 'astrolabe') {
+    if (snapshot.activeStation === 'astrolabe') {
       const stepCount = snapshot.astrolabe.stepCount ?? ASTROLABE_STEPS;
       const couplings = snapshot.astrolabe.couplings ?? [];
       const alignedCount = snapshot.astrolabe.rings.filter((r) => r === 0).length;
       const couplingNote =
         couplings.length > 0
-          ? ` Coupled pinions: ${couplings
-              .map((c) => `${RING_SHORT[c.sourceRing]}->${RING_SHORT[c.targetRing]} (${c.ratioLabel})`)
-              .join(', ')}`
+          ? ` (${couplings
+              .map((c) => `${RING_SHORT[c.sourceRing]}->${RING_SHORT[c.targetRing]} ${c.ratioLabel}`)
+              .join(', ')})`
           : '';
-      this.stationKicker.textContent = 'West Wing (Instrument I)';
       this.stationName.textContent = 'Meridian Astrolabe';
       this.stationStatus.textContent = snapshot.astrolabe.solved
-        ? 'All 3 bronze apertures locked at zenith. West conduit glowing!'
-        : `${alignedCount}/3 rings aligned (15° magnetic detent).${couplingNote}`;
+        ? 'Aligned'
+        : `${alignedCount}/3 aligned${couplingNote}`;
 
-      const labels = ['Outer Ring', 'Middle Ring', 'Inner Ring'];
+      const labels = ['Outer', 'Middle', 'Inner'];
       labels.forEach((label, idx) => {
         const step = snapshot.astrolabe.rings[idx];
         const aligned = step === 0;
@@ -574,28 +695,19 @@ export class ObservatoryHud {
         btn.className = `action-chip${aligned ? ' is-aligned' : ''}`;
         btn.dataset.action = `astrolabe-ring-${idx}`;
         btn.disabled = snapshot.phase === 'playing' && snapshot.astrolabe.solved;
-        btn.textContent = aligned
-          ? `${label}: Locked ✓`
-          : `Rotate ${label} (${deg}°)${ratioSuffix}`;
+        btn.textContent = aligned ? `${label} ✓` : `${label} (${deg}°)${ratioSuffix}`;
         btn.addEventListener('click', () => this.actions.onRotateAstrolabe(idx));
         this.stationControls.appendChild(btn);
       });
-    } else if (displayedStation === 'mirrors') {
-      const totalMirrors = snapshot.mirrors.mirrors.length;
+    } else if (snapshot.activeStation === 'mirrors') {
       const totalCollectors = (snapshot.mirrors.collectors ?? [snapshot.mirrors.collector]).length;
       const litCollectors = (snapshot.mirrors.litCollectorIndices ?? []).length;
-      const splitterCount = (snapshot.mirrors.splitters ?? []).length;
-      const prismSummary =
-        totalCollectors > 1
-          ? `${litCollectors}/${totalCollectors} prisms lit (${splitterCount} splitter${splitterCount === 1 ? '' : 's'})`
-          : `${snapshot.mirrors.litMirrorCount}/${totalMirrors} reflector${totalMirrors === 1 ? '' : 's'} catching beam`;
-      this.stationKicker.textContent = 'East Wing (Instrument II)';
-      this.stationName.textContent = 'Obsidian Mirror Courtyard';
+      this.stationName.textContent = 'Mirror Courtyard';
       this.stationStatus.textContent = snapshot.mirrors.solved
-        ? totalCollectors > 1
-          ? `All ${totalCollectors} Collector Prisms blazing! East conduit glowing!`
-          : 'Molten sunbeam locked onto the Collector Prism. East conduit glowing!'
-        : `${snapshot.mirrors.layoutName}, ${prismSummary}`;
+        ? `${totalCollectors}/${totalCollectors} Prisms Lit`
+        : totalCollectors > 1
+          ? `${litCollectors}/${totalCollectors} Prisms`
+          : `${snapshot.mirrors.litMirrorCount}/${snapshot.mirrors.mirrors.length} Lit`;
 
       snapshot.mirrors.mirrors.forEach((mirror, idx) => {
         const btn = document.createElement('button');
@@ -603,22 +715,21 @@ export class ObservatoryHud {
         btn.className = 'action-chip';
         btn.dataset.action = `mirror-${idx}`;
         btn.disabled = snapshot.phase === 'playing' && snapshot.mirrors.solved;
-        btn.textContent = `Turn ${mirror.label} (${MIRROR_ORIENTATION_LABELS[mirror.orientation]})`;
+        btn.textContent = `${mirror.label} (${MIRROR_ORIENTATION_LABELS[mirror.orientation]})`;
         btn.addEventListener('click', () => this.actions.onRotateMirror(idx));
         this.stationControls.appendChild(btn);
       });
-    } else if (displayedStation === 'chimes') {
-      this.stationKicker.textContent = 'North Wing (Instrument III)';
-      this.stationName.textContent = 'Harmonic Sun-Chimes';
+    } else if (snapshot.activeStation === 'chimes') {
+      this.stationName.textContent = 'Sun-Chimes';
       this.stationStatus.textContent = snapshot.chimes.solved
-        ? 'Ascending pentatonic resonance complete. North conduit glowing!'
-        : `Strike bells lowest to highest (${snapshot.chimes.progress}/4 struck)`;
+        ? 'Resonating'
+        : `${snapshot.chimes.progress}/4 Ascending`;
 
       const pulseBtn = document.createElement('button');
       pulseBtn.type = 'button';
       pulseBtn.className = 'action-chip is-accent';
       pulseBtn.dataset.action = 'chimes-pulse';
-      pulseBtn.textContent = 'Pulse Sequence [Space]';
+      pulseBtn.textContent = 'Pulse [Space]';
       pulseBtn.addEventListener('click', () => this.actions.onPulseChimes());
       this.stationControls.appendChild(pulseBtn);
 
@@ -632,62 +743,56 @@ export class ObservatoryHud {
         btn.addEventListener('click', () => this.actions.onStrikeChime(slotIdx));
         this.stationControls.appendChild(btn);
       });
-    } else if (displayedStation === 'apex') {
-      this.stationKicker.textContent = 'Central Dais (Finale)';
-      this.stationName.textContent = 'The Solstice Apex Crown';
+    } else if (snapshot.activeStation === 'apex') {
+      this.stationName.textContent = 'Solstice Apex';
       this.stationStatus.textContent = snapshot.apexIgnited
-        ? 'Dawn Corona radiance achieved. The molten brass sky blooms overhead.'
+        ? 'Dawn Corona Active'
         : snapshot.apexUnlocked
-          ? 'All 3 molten conduits lit! Trigger the Crown to ignite the Solstice Zenith.'
-          : `${snapshot.solvedCount}/3 conduits lit. Awaken the remaining wings first.`;
+          ? 'Ready to Ignite'
+          : `${snapshot.solvedCount}/3 Conduits`;
 
       const igniteBtn = document.createElement('button');
       igniteBtn.type = 'button';
       igniteBtn.className = `action-chip${snapshot.apexUnlocked ? ' is-ignite' : ''}`;
       igniteBtn.dataset.action = 'apex-ignite';
       igniteBtn.textContent = snapshot.apexIgnited
-        ? 'Pulse Solstice Bloom'
+        ? 'Pulse Dawn Corona'
         : snapshot.apexUnlocked
           ? 'Ignite Solstice Apex Crown'
-          : `Requires 3/3 Conduits (${snapshot.solvedCount}/3)`;
+          : `Requires 3/3 Conduits`;
       igniteBtn.addEventListener('click', () => this.actions.onTriggerApex());
       this.stationControls.appendChild(igniteBtn);
     }
   }
 
   private buildHintText(snapshot: GameSnapshot): string {
-    const station =
-      snapshot.cameraMode === 'walk' && this.walkNearbyStation
-        ? this.walkNearbyStation
-        : snapshot.activeStation;
-
-    if (station === 'astrolabe') {
+    if (snapshot.activeStation === 'astrolabe') {
       if (snapshot.astrolabe.solved) {
-        return 'The Meridian Astrolabe is aligned! Step to another wing using the bottom pad dock or walk across the sanctuary.';
+        return 'The Meridian Astrolabe is aligned! Click any other instrument directly in 3D or walk across the sanctuary.';
       }
       const hasCouplings = (snapshot.astrolabe.couplings ?? []).length > 0;
       return hasCouplings
-        ? 'Align the Outer Ring to 0° first, then the Middle Ring (which counter-rotates via the meshed bronze pinion), and finish with the Inner Ring.'
-        : 'Click each geared bronze ring (or press E nearby in Walk mode) until its glowing solar aperture locks straight beneath the 12 o’clock Zenith Jewel (0°).';
+        ? 'Click the Outer bronze ring directly in 3D until it locks at 0°, then align Middle (driving Inner if coupled), and finish with Inner.'
+        : 'Hover and click each geared bronze ring directly in 3D (or press E nearby in Walk mode) until its glowing aperture locks under the top Zenith Jewel.';
     }
-    if (station === 'mirrors') {
+    if (snapshot.activeStation === 'mirrors') {
       if (snapshot.mirrors.solved) {
         return 'Every Collector Prism is blazing! Head to any remaining dormant wing.';
       }
       const hasSplitters = (snapshot.mirrors.splitters ?? []).length > 0;
       return hasSplitters
-        ? 'Dichroic Beam Splitter Prisms split the molten sunbeam into two orthogonal rays. Pivot each bronze obelisk so every branch illuminates all Collector Prisms simultaneously.'
-        : 'Follow the glowing beam from the Solar Emitter. Turn each bronze obelisk so its gilded mirror face steers the sunbeam around the fluted basalt pillars into the Collector Prism.';
+        ? 'Dichroic Beam Splitter Prisms bifurcate the molten sunbeam. Click basalt obelisks directly in 3D so every branch lights all Collector Prisms.'
+        : 'Click each carved basalt obelisk directly in 3D to bounce the molten sunbeam around fluted pillars into the Collector Prism.';
     }
-    if (station === 'chimes') {
+    if (snapshot.activeStation === 'chimes') {
       if (snapshot.chimes.solved) {
         return 'The Sun-Chimes are harmonizing! Return to the Central Apex or finish any remaining instruments.';
       }
-      return 'Press "Pulse Sequence" (or click the bronze gong) to watch and hear the golden light travel from the deepest bell to the brightest bell, then strike them in ascending order.';
+      return 'Click the bronze gong (or press Space) to hear and watch the golden pulse from lowest to highest, then click the four temple bells directly in 3D.';
     }
-    if (station === 'apex') {
+    if (snapshot.activeStation === 'apex') {
       if (snapshot.apexUnlocked) {
-        return 'All three molten floor conduits converge at the dais! Click the floating Apex Crown (or press E / Ignite) to ignite the Dawn Corona breakthrough.';
+        return 'All three molten conduits converge at the dais! Click the floating Apex Crown directly in 3D to ignite the Dawn Corona breakthrough.';
       }
       const missing: string[] = [];
       if (!snapshot.astrolabe.solved) missing.push('West Meridian Astrolabe');
@@ -695,6 +800,6 @@ export class ObservatoryHud {
       if (!snapshot.chimes.solved) missing.push('North Harmonic Sun-Chimes');
       return `Awaken the remaining dormant wing(s): ${missing.join(', ')}.`;
     }
-    return 'Press V to walk inside the fluted Doric sanctuary or click a stepping pad below to visit the Astrolabe, Mirror Courtyard, and Sun-Chimes across all 7 Celestial Trials.';
+    return 'Click bronze rings, basalt obelisks, or temple bells directly in 3D, press V to walk the 16-column Doric sanctuary, or press C for Cinema mode.';
   }
 }
