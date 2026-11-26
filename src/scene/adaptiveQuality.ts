@@ -37,14 +37,30 @@ export class AdaptiveQualityController {
   private elapsedSinceAdjust = 0;
 
   constructor(options?: AdaptiveQualityOptions) {
-    const native = Math.max(1.0, options?.nativeDpr ?? 1.5);
-    this.minDpr = Math.max(1.0, options?.minDpr ?? 1.0);
-    this.maxDpr = Math.max(this.minDpr, Math.min(2.0, options?.maxDpr ?? Math.min(2.0, native)));
-    this.minParticleScale = Math.max(0.25, Math.min(1.0, options?.minParticleScale ?? 0.45));
-    const targetMs = options?.targetFrameMs ?? 16.67;
+    const rawNative = options?.nativeDpr;
+    const native = typeof rawNative === 'number' && Number.isFinite(rawNative) ? Math.max(1.0, rawNative) : 1.5;
+    const rawMinDpr = options?.minDpr;
+    this.minDpr =
+      typeof rawMinDpr === 'number' && Number.isFinite(rawMinDpr) ? Math.max(1.0, rawMinDpr) : 1.0;
+    const rawMaxDpr = options?.maxDpr;
+    const resolvedMax =
+      typeof rawMaxDpr === 'number' && Number.isFinite(rawMaxDpr) ? rawMaxDpr : Math.min(2.0, native);
+    this.maxDpr = Math.max(this.minDpr, Math.min(2.0, resolvedMax));
+    const rawMinP = options?.minParticleScale;
+    this.minParticleScale =
+      typeof rawMinP === 'number' && Number.isFinite(rawMinP)
+        ? Math.max(0.25, Math.min(1.0, rawMinP))
+        : 0.45;
+    const rawTarget = options?.targetFrameMs;
+    const targetMs =
+      typeof rawTarget === 'number' && Number.isFinite(rawTarget) && rawTarget > 1 ? rawTarget : 16.67;
     this.downThresholdMs = targetMs * 1.24; // ~20.7ms (<48fps) triggers downscale
     this.upThresholdMs = targetMs * 0.86; // ~14.3ms (>70fps headroom) allows upscale
-    this.cooldownSec = Math.max(0.2, options?.adjustCooldownSec ?? 1.2);
+    const rawCooldown = options?.adjustCooldownSec;
+    this.cooldownSec =
+      typeof rawCooldown === 'number' && Number.isFinite(rawCooldown)
+        ? Math.max(0.2, rawCooldown)
+        : 1.2;
     this.dpr = this.maxDpr;
   }
 

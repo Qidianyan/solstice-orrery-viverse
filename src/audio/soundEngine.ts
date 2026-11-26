@@ -45,6 +45,8 @@ export class SoundEngine {
   private harmonicLayerGain: GainNode | null = null;
   private harmonicOscs: OscillatorNode[] = [];
   private activeHarmonicCount = 0;
+  private activeApexIgnited = false;
+  private activeTrialNumber = 1;
 
   constructor() {
     if (typeof window !== 'undefined' && typeof Audio !== 'undefined') {
@@ -74,8 +76,8 @@ export class SoundEngine {
         this.activeVoice.pause();
       }
       this.stopHarmonicBed();
-    } else if (this.activeHarmonicCount > 0) {
-      this.syncHarmonicLayer(this.activeHarmonicCount, false);
+    } else if (this.activeHarmonicCount > 0 || this.activeApexIgnited) {
+      this.syncHarmonicLayer(this.activeHarmonicCount, this.activeApexIgnited, this.activeTrialNumber);
     }
   }
 
@@ -126,7 +128,18 @@ export class SoundEngine {
       this.ctx = new AudioCtor();
     }
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume().catch(() => {});
+      void this.ctx
+        .resume()
+        .then(() => {
+          if (!this.muted && (this.activeHarmonicCount > 0 || this.activeApexIgnited)) {
+            this.syncHarmonicLayer(
+              this.activeHarmonicCount,
+              this.activeApexIgnited,
+              this.activeTrialNumber,
+            );
+          }
+        })
+        .catch(() => {});
     }
     return this.ctx;
   }
@@ -168,13 +181,22 @@ export class SoundEngine {
    * Layers soft continuous bronze overtone resonance (C4 -> G4 -> D5 -> A5) as conduits awaken.
    * Strictly autoplay-safe: never creates AudioContext until user has already interacted.
    */
-  public syncHarmonicLayer(solvedCount: number, apexIgnited: boolean = false): void {
+  public syncHarmonicLayer(
+    solvedCount: number,
+    apexIgnited: boolean = false,
+    trialNumber: number = 1,
+  ): void {
     this.activeHarmonicCount = Math.max(0, Math.min(3, solvedCount));
+    this.activeApexIgnited = apexIgnited;
+    this.activeTrialNumber = trialNumber;
     if (this.muted || !this.ctx || this.ctx.state !== 'running') {
       this.stopHarmonicBed();
       return;
     }
-    const freqs = getConduitHarmonicFrequencies(this.activeHarmonicCount, { apexIgnited });
+    const freqs = getConduitHarmonicFrequencies(this.activeHarmonicCount, {
+      apexIgnited,
+      trialNumber,
+    });
     this.stopHarmonicBed();
     if (freqs.length === 0) return;
 
@@ -342,7 +364,7 @@ export class SoundEngine {
       fanfare.forEach((freq, idx) => {
         this.triggerBellVoice(ctx, freq, 0.1, 2.7, now + idx * 0.11);
       });
-      this.syncHarmonicLayer(3, true);
+      this.syncHarmonicLayer(3, true, trialNumber);
     }
     this.playVoiceover('victory');
   }

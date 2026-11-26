@@ -671,6 +671,9 @@ export class ObservatoryScene {
       if (q.changed) {
         this.renderer.setPixelRatio(q.state.dpr);
         this.composer.setPixelRatio(q.state.dpr);
+        const w = this.canvas.clientWidth || window.innerWidth || 1280;
+        const h = this.canvas.clientHeight || window.innerHeight || 720;
+        this.bloomPass.setSize(w, h);
         this.env.setParticleRatio(q.state.particleScale);
       }
     }

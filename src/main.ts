@@ -85,7 +85,6 @@ function bootstrap(): void {
     onTriggerApex: () => {
       controller.triggerApexCrown();
     },
-    onResetView: () => scene.resetView(),
     onToggleMute: () => sound.toggleMute(),
   });
 

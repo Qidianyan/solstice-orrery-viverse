@@ -17,7 +17,6 @@ export interface HudActions {
   onStrikeChime: (slotIndex: number) => void;
   onPulseChimes: () => void;
   onTriggerApex: () => void;
-  onResetView: () => void;
   onToggleMute: () => boolean;
 }
 
@@ -110,6 +109,7 @@ export class ObservatoryHud {
   private lastPhase: GameSnapshot['phase'] | null = null;
   private lastRenderedStationKey = '';
   private currentSnapshot: GameSnapshot | null = null;
+  private lastWalkStation: Exclude<StationId, 'overview'> | null = null;
 
   constructor(actions: HudActions) {
     this.actions = actions;
@@ -268,6 +268,7 @@ export class ObservatoryHud {
     ]) {
       dlg.addEventListener('close', () => {
         dlg.returnValue = '';
+        this.refreshWalkPrompt();
       });
     }
 
@@ -327,6 +328,7 @@ export class ObservatoryHud {
     if (active) {
       this.setHintOpen(false);
     }
+    this.refreshWalkPrompt();
     return active;
   }
 
@@ -364,6 +366,12 @@ export class ObservatoryHud {
   }
 
   public setWalkPrompt(station: Exclude<StationId, 'overview'> | null): void {
+    this.lastWalkStation = station;
+    this.refreshWalkPrompt();
+  }
+
+  private refreshWalkPrompt(): void {
+    const station = this.lastWalkStation;
     if (
       !station ||
       this.isAnyModalOpen() ||

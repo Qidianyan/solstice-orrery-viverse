@@ -153,4 +153,21 @@ describe('V5-iter2 3D direct manipulation, bronze harmonics, adaptive DPR & Cine
     expect(rec1?.moves).toBe(wonSnap.moves);
     expect(rec1?.stars).toBeGreaterThanOrEqual(1);
   });
+
+  it('guards AdaptiveQualityController against NaN/zero constructor options and preserves finite DPR bounds', () => {
+    const q = new AdaptiveQualityController({
+      nativeDpr: Number.NaN,
+      minDpr: Number.NEGATIVE_INFINITY,
+      maxDpr: Number.NaN,
+      minParticleScale: Number.NaN,
+      targetFrameMs: 0,
+      adjustCooldownSec: Number.NaN,
+    });
+    const st = q.getState();
+    expect(Number.isFinite(st.dpr)).toBe(true);
+    expect(st.dpr).toBeGreaterThanOrEqual(1.0);
+    expect(st.dpr).toBeLessThanOrEqual(2.0);
+    expect(Number.isFinite(st.particleScale)).toBe(true);
+    expect(st.particleScale).toBe(1.0);
+  });
 });
